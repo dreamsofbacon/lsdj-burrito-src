@@ -2,6 +2,8 @@
 
 LSDJ Burrito runs [Little Sound Dj](https://www.littlesounddj.com) on the M-VAVE FM-1, played from the FM-1's own keys and knobs, with songs saved to the FM-1's flash. It adds per-channel effects (filters including notch and 24 dB low-pass, drive with soft / hard / fold / fuzz, warmth, lo-fi, an LFO to cutoff, volume or pan), a master echo and compressor, MIDI clock in and out, MIDI notes and CCs, themes, and experimental Bluetooth MIDI.
 
+![The web page's Perform view: the FM-1 (here the virtual FM-1 running LSDj), the master effects, the four channel pages at once, and the wiring of every effect](docs/perform.png)
+
 - **Web page:** [dreamsofbacon.github.io/lsdj-burrito](https://dreamsofbacon.github.io/lsdj-burrito/): install or update LSDJ Burrito step by step with your own `lsdj.gb` (LSDj is not included, and your ROM never leaves your computer), then control effects, songs, colours and settings over USB (or Bluetooth).
 - **Status:** 0.9.96, alpha (package identity FM-1_537000996). Releases: the [GitHub releases](https://github.com/dreamsofbacon/lsdj-burrito-src/releases) carry the firmware file, with no LSDj in it: on an FM-1 it asks you to add your own with the web page. Installing from the web page with your own LSDj is experimental; LSDj 9.3.9 is the verified version.
 - **Based on** [GameDude](https://github.com/ChanceTheMaker/gamedude-fm1-smk) by ChanceTheMaker (GPL-3.0). No Bluetooth (removed in FM-1_994, with GameDude's game library loader and website). The firmware README follows below.
