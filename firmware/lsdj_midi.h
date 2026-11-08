@@ -94,19 +94,21 @@ static uint32_t lsdj_midi_delay_samples(const lsdj_midi_t *m) { return lsdj_midi
 
 /* ---- CC -> effects. Channel N + c is LSDj channel c (0 PU1 .. 3 NOI); the echo and compressor CCs work on any of them.
    Per channel: 70 FILTER (6 bands of ~21: OFF LP HP BP NOTCH LP24), 71 RESO, 74 CUTOFF, 75 DRIVE, 76 CRUSH, 77 DECIMATE,
-                91 ECHO SEND, 80 CHANNEL FX (64+ on), 81 MUTE (64+ muted)
+                91 ECHO SEND, 92 REVERB SEND (0.9.97-dev.7), 80 CHANNEL FX (64+ on), 81 MUTE (64+ muted)
                 alpha 66: 72 LFO RATE, 73 LFO DEPTH, 78 WARM, 79 DISTORT (4 bands of 32: SOFT HARD FOLD FUZZ),
                 82 LFO SHAPE (5 bands: SINE TRI SQUARE SAW RND), 83 LFO TO (3 bands: CUTOFF VOLUME PAN)
    Echo:        12 TIME (synced: 12 note values), 13 FEEDBACK, 14 MIX, 15 TONE, 16 WOBBLE, 17 SYNC (64+),
                 18 MODE (64+ ping-pong), 19 FREEZE (64+); 20 COMPRESSOR (alpha 66)
+   Reverb (0.9.97): 21 MIX, 22 SIZE, 23 TONE; like the echo, on any of the four (24 was INPUT before dev.7)
    Returns 1 if it was one of these. A cutoff, resonance, warmth or cutoff LFO on a channel with no filter turns
    low-pass on, as the knobs do. */
-#define LSDJ_MIDI_CCS 24u
+#define LSDJ_MIDI_CCS 28u
 static const uint8_t lsdj_midi_cc_num[LSDJ_MIDI_CCS] = {70, 71, 74, 75, 76, 77, 91, 80, 81, 12, 13, 14, 15, 16, 17, 18, 19,
-                                                        72, 73, 78, 79, 82, 83, 20};
+                                                        72, 73, 78, 79, 82, 83, 20, 21, 22, 23, 92};
 static const char *const lsdj_midi_cc_name[LSDJ_MIDI_CCS] = {"FILTER", "RESO", "CUTOFF", "DRIVE", "CRUSH", "DECIMATE",
     "ECHO SEND", "CHANNEL FX", "MUTE", "ECHO TIME", "ECHO FDBK", "ECHO MIX", "ECHO TONE", "ECHO WOBBLE", "ECHO SYNC",
-    "ECHO MODE", "FREEZE", "LFO RATE", "LFO DEPTH", "WARM", "DISTORT", "LFO SHAPE", "LFO TO", "COMPRESSOR"};
+    "ECHO MODE", "FREEZE", "LFO RATE", "LFO DEPTH", "WARM", "DISTORT", "LFO SHAPE", "LFO TO", "COMPRESSOR",
+    "REVERB MIX", "REVERB SIZE", "REVERB TONE", "REVERB SEND"};
 static int lsdj_midi_cc_apply(lsdj_fx_t *fx, unsigned c, unsigned cc, unsigned v) {
     if (c > 3u || v > 127u) return 0;
     uint8_t *p = fx->p.ch[c], *q = fx->p.q[c], on = v >= 64u;
@@ -135,6 +137,10 @@ static int lsdj_midi_cc_apply(lsdj_fx_t *fx, unsigned c, unsigned cc, unsigned v
     case 18: fx->p.m[FXM_MODE] = on; break;
     case 19: fx->freeze = on; break;
     case 20: fx->p.comp = (uint8_t)v; break;
+    case 21: fx->p.r[FXR_MIX] = (uint8_t)v; break;
+    case 22: fx->p.r[FXR_SIZE] = (uint8_t)v; break;
+    case 23: fx->p.r[FXR_TONE] = (uint8_t)v; break;
+    case 92: fx->p.rs[c] = (uint8_t)v; break;
     default: return 0;
     }
     lsdj_fx_update(fx);
@@ -149,7 +155,8 @@ static int lsdj_midi_cc(const lsdj_midi_t *m, lsdj_fx_t *fx, uint32_t pkt) {
 /* The knob effect (FXK_*) of each CC above, in lsdj_midi_cc_num's order (MUTE has none). */
 static const uint8_t lsdj_midi_cc_fxk[LSDJ_MIDI_CCS] = {FXK_TYPE, FXK_RESO, FXK_CUTOFF, FXK_DRIVE, FXK_CRUSH, FXK_DECIM,
     FXK_SEND, FXK_FXON, FXK_NONE, FXK_ECHO_TIME, FXK_ECHO_FB, FXK_ECHO_MIX, FXK_ECHO_TONE, FXK_ECHO_WOBBLE, FXK_SYNC,
-    FXK_MODE, FXK_FREEZE, FXK_LFO_RATE, FXK_LFO_DEPTH, FXK_WARM, FXK_DIST, FXK_LFO_SHAPE, FXK_LFO_DEST, FXK_COMP};
+    FXK_MODE, FXK_FREEZE, FXK_LFO_RATE, FXK_LFO_DEPTH, FXK_WARM, FXK_DIST, FXK_LFO_SHAPE, FXK_LFO_DEST, FXK_COMP,
+    FXK_RV_MIX, FXK_RV_SIZE, FXK_RV_TONE, FXK_RV_SEND};
 /* CC number -> its knob effect, or FXK_NONE. */
 static unsigned lsdj_midi_fxk_of_cc(unsigned cc) {
     for (unsigned i = 0; i < LSDJ_MIDI_CCS; i++) if (lsdj_midi_cc_num[i] == cc) return lsdj_midi_cc_fxk[i];

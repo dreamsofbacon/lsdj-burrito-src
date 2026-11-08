@@ -33,7 +33,7 @@ static lsdj_ov_colors_t lsdj_ov_col = {
 
 /* 5x7 glyphs: one byte per row, bit 4 = the leftmost column. Characters not
    listed draw as blank. (Bytes, not "#...#" strings: 357 bytes instead of 3.5 KB.) */
-static const char lsdj_ov_chars[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-+!?/()=',#_";
+static const char lsdj_ov_chars[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-+!?/()=',#_%";
 static const uint8_t lsdj_ov_font[][7] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},   /* space */
     {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},   /* A */
@@ -86,6 +86,7 @@ static const uint8_t lsdj_ov_font[][7] = {
     {0x00,0x00,0x00,0x00,0x0C,0x04,0x08},   /* , */
     {0x0A,0x0A,0x1F,0x0A,0x1F,0x0A,0x0A},   /* # */
     {0x00,0x00,0x00,0x00,0x00,0x00,0x1F},   /* _ */
+    {0x18,0x19,0x02,0x04,0x08,0x13,0x03},   /* % (the install screen) */
 };
 
 typedef struct {

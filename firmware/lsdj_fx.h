@@ -21,6 +21,10 @@
      0.05..12.8 Hz or tempo-synced 1/32..4 bars, depth, shape sine / triangle
      / square / saw / random, to the cutoff, the volume or the pan); and a
      master compressor (one amount, make-up gain automatic).
+   0.9.97 master reverb (lsdj_fx_set_reverb: LSDJ_FX_RV_LEN 16-bit samples, 6.6 KB): two input allpasses into a
+     four-line feedback delay network (Hadamard mixing, a one-pole damping filter in each line) at 22.05 kHz,
+     after the echo and before the compressor. MIX, SIZE (decay 0.4 .. 6 s), TONE (damping: dark .. bright); fed by
+     each channel's own REVERB SEND (0.9.97-dev.7; dev.1-6 had INPUT: the whole mix or the echo sends).
    With every value at 0 the output is the plain MiniGB mix, bit for bit.
    Pure logic, fixed point: tests/lsdj_fx.c. */
 #pragma once
@@ -33,6 +37,14 @@ enum { FXP_TYPE, FXP_CUTOFF, FXP_RESO, FXP_DRIVE, FXP_CRUSH, FXP_DECIM, FXP_SEND
 enum { FXM_TIME, FXM_FEEDBACK, FXM_MIX, FXM_SYNC, FXM_MODE, FXM_TONE, FXM_WOBBLE, FXM_COUNT };
 /* alpha 66, per channel: distortion type, warm, LFO rate / depth / shape / destination */
 enum { FXQ_DIST, FXQ_WARM, FXQ_LFO_RATE, FXQ_LFO_DEPTH, FXQ_LFO_SHAPE, FXQ_LFO_DEST, FXQ_COUNT };
+/* 0.9.97, master reverb */
+enum { FXR_MIX, FXR_SIZE, FXR_TONE, FXR_COUNT };
+#define LSDJ_FX_RV_SIZE0 64u                 /* the defaults: a medium room, */
+#define LSDJ_FX_RV_TONE0 64u                 /* ... damped above about 1.5 kHz */
+#define LSDJ_FX_RV_AP1 113u                  /* the input allpasses and the four lines (27-39 ms), 22.05 kHz samples */
+#define LSDJ_FX_RV_AP2 241u
+static const uint16_t lsdj_fx_rv_line[4] = {601u, 683u, 787u, 863u};
+#define LSDJ_FX_RV_LEN (LSDJ_FX_RV_AP1 + LSDJ_FX_RV_AP2 + 601u + 683u + 787u + 863u)
 #define LSDJ_FX_FILTERS 6u                   /* off, low-pass, high-pass, band-pass, notch, low-pass 24 dB */
 #define LSDJ_FX_DISTS 4u                     /* soft, hard, fold, fuzz */
 #define LSDJ_FX_SHAPES 5u                    /* sine, triangle, square, saw, random */
@@ -59,6 +71,8 @@ typedef struct {
     uint8_t q[4][FXQ_COUNT];                 /* per channel, alpha 66 */
     uint8_t comp;                            /* master compressor amount */
     uint8_t bypass;                          /* all effects dry; settings retained */
+    uint8_t r[FXR_COUNT];                    /* master reverb (0.9.97) */
+    uint8_t rs[4];                           /* per channel: its reverb send (0.9.97-dev.7) */
 } lsdj_fx_params_t;
 
 typedef struct {
@@ -81,6 +95,9 @@ typedef struct {
     int32_t echo_in, echo_l, echo_r, tone_st, tone_k;
     int32_t comp_env;                        /* compressor: the peak envelope */
     uint8_t active;                          /* anything to do (lsdj_fx_update) */
+    int16_t *rv; uint32_t rv_pos[6], rv_half; /* reverb: its lines (none: no reverb), positions */
+    int32_t rv_in, rv_l, rv_r, rv_lp[4], rv_g, rv_k, rv_o;
+    uint8_t rv_on;                           /* the reverb ran last update (turned on: its lines start silent) */
 } lsdj_fx_t;
 
 /* 2 sin(pi f / 44100) in Q14, f = 40 Hz * 200^(i / 127). */
@@ -130,6 +147,7 @@ static int32_t lsdj_fx_unulaw(uint8_t u) {
 static void lsdj_fx_init(lsdj_fx_t *f, uint8_t *echo_buf) {
     uint8_t *b = (uint8_t *)f; for (uint32_t i = 0; i < sizeof *f; i++) b[i] = 0;
     f->echo = echo_buf; f->bpm = 120; f->p.m[FXM_TONE] = LSDJ_FX_TONE_FLAT;
+    f->p.r[FXR_SIZE] = LSDJ_FX_RV_SIZE0; f->p.r[FXR_TONE] = LSDJ_FX_RV_TONE0;
     for (uint32_t c = 0; c < 4; c++) { f->c[c].pan_l = f->c[c].pan_r = 32768; f->c[c].rnd = 0x9E3779B9u * (c + 1u); }
     for (uint32_t i = 0; i < LSDJ_FX_ECHO_LEN; i++) echo_buf[i] = LSDJ_FX_SILENT_BYTE;
 }
@@ -160,9 +178,29 @@ static uint32_t lsdj_fx_echo_samples(const lsdj_fx_t *f) {
     while (n > max) n /= 2u;
     return n < 64u ? 64u : n;
 }
+/* The reverb's lines (LSDJ_FX_RV_LEN samples); without them REVERB does nothing. */
+static void lsdj_fx_set_reverb(lsdj_fx_t *f, int16_t *buf) { f->rv = buf; f->rv_on = 0; }
 /* Call after changing f->p, f->mute or f->bpm. */
 static void lsdj_fx_update(lsdj_fx_t *f) {
-    uint8_t any = (uint8_t)(f->p.m[FXM_MIX] != 0) | f->mute | f->p.comp;
+    uint8_t rv = f->rv && f->p.r[FXR_MIX];
+    if (rv && !f->rv_on) {                   /* turned on: start from silence, not what was left */
+        for (uint32_t i = 0; i < LSDJ_FX_RV_LEN; i++) f->rv[i] = 0;
+        for (uint32_t i = 0; i < 4; i++) f->rv_lp[i] = 0;
+        f->rv_l = f->rv_r = f->rv_in = 0;
+    }
+    f->rv_on = rv;
+    /* decay per pass, Q14: 0.57 .. 0.96 (with lines of 27-39 ms: about 0.4 .. 6 s to fade 60 dB);
+       damping, Q14: a one-pole low-pass from ~400 Hz (TONE 0) to open (127) */
+    f->rv_g = 9270 + (int32_t)f->p.r[FXR_SIZE] * (15775 - 9270) / 127;
+    f->rv_k = 1800 + (int32_t)f->p.r[FXR_TONE] * f->p.r[FXR_TONE] * (16384 - 1800) / (127 * 127);
+    /* output level, Q14: 0.7 sqrt(1 - g^2), so a long tail (more energy kept) is no louder than a short one; MIX 127
+       about as loud as the dry sound */
+    {
+        uint32_t v = 268435456u - (uint32_t)(f->rv_g * f->rv_g), r = 0;
+        for (uint32_t b = 1u << 30; b; b >>= 2) { if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1; }
+        f->rv_o = (int32_t)r * 7 / 10;
+    }
+    uint8_t any = (uint8_t)(f->p.m[FXM_MIX] != 0) | f->mute | f->p.comp | rv;
     for (uint32_t c = 0; c < 4; c++) {
         if (!((f->p.fx_off >> c) & 1u))
             any |= f->p.ch[c][FXP_TYPE] | f->p.ch[c][FXP_DRIVE] | f->p.ch[c][FXP_CRUSH] |
@@ -327,6 +365,37 @@ static void lsdj_fx_echo_tick(lsdj_fx_t *f, int32_t in) {
     f->echo_pos = (f->echo_pos + 1u) & LSDJ_FX_EMASK;
 }
 
+/* Reverb arithmetic rounds toward zero (C division), never toward minus infinity: a shift would leave a
+   small signal going round the lines for ever instead of fading out. */
+/* Reverb: a Schroeder allpass (gain 0.5) on line b of length n. */
+static int32_t lsdj_fx_rv_ap(int16_t *b, uint32_t n, uint32_t *pos, int32_t x) {
+    int32_t d = b[*pos], w = lsdj_fx_clamp16(x - d / 2);
+    b[*pos] = (int16_t)w;
+    if (++*pos == n) *pos = 0;
+    return d + w / 2;
+}
+/* One 22.05 kHz reverb step: in = what goes in (mono). */
+static void lsdj_fx_rv_tick(lsdj_fx_t *f, int32_t in) {
+    int16_t *b = f->rv;
+    int32_t u = lsdj_fx_rv_ap(b, LSDJ_FX_RV_AP1, &f->rv_pos[4], in);
+    u = lsdj_fx_rv_ap(b + LSDJ_FX_RV_AP1, LSDJ_FX_RV_AP2, &f->rv_pos[5], u);
+    int16_t *ln[4]; int32_t a[4];
+    ln[0] = b + LSDJ_FX_RV_AP1 + LSDJ_FX_RV_AP2;
+    for (uint32_t i = 1; i < 4; i++) ln[i] = ln[i - 1] + lsdj_fx_rv_line[i - 1];
+    for (uint32_t i = 0; i < 4; i++) a[i] = ln[i][f->rv_pos[i]];
+    /* Hadamard / 2 (no gain), held to 16 bits so the Q14 products below stay inside 32 bits */
+    int32_t h[4] = {lsdj_fx_clamp16((a[0] + a[1] + a[2] + a[3]) / 2), lsdj_fx_clamp16((a[0] - a[1] + a[2] - a[3]) / 2),
+                    lsdj_fx_clamp16((a[0] + a[1] - a[2] - a[3]) / 2), lsdj_fx_clamp16((a[0] - a[1] - a[2] + a[3]) / 2)};
+    u /= 2;
+    for (uint32_t i = 0; i < 4; i++) {
+        f->rv_lp[i] += (h[i] - f->rv_lp[i]) * f->rv_k / 16384;
+        int32_t w = (i & 1u ? -u : u) + f->rv_lp[i] * f->rv_g / 16384;
+        ln[i][f->rv_pos[i]] = (int16_t)lsdj_fx_clamp16(w);
+        if (++f->rv_pos[i] == lsdj_fx_rv_line[i]) f->rv_pos[i] = 0;
+    }
+    f->rv_l = (a[0] + a[2]) * f->rv_o / 16384; f->rv_r = (a[1] + a[3]) * f->rv_o / 16384;
+}
+
 /* The stereo mix of one split sample (4 channels + panning word, see
    minigb_apu_split) with the effects; before the volume. */
 static void lsdj_fx_mix(lsdj_fx_t *f, const int16_t *smp, int32_t *lo, int32_t *ro) {
@@ -342,7 +411,7 @@ static void lsdj_fx_mix(lsdj_fx_t *f, const int16_t *smp, int32_t *lo, int32_t *
         if (!f->active) { *lo = L; *ro = R; return; }
         dry_l = L; dry_r = R;
     }
-    int32_t L = 0, R = 0, send = 0;
+    int32_t L = 0, R = 0, send = 0, rsend = 0;
     for (uint32_t c = 0; c < 4; c++) {
         if ((f->mute >> c) & 1u) continue;
         int dry = (f->p.fx_off >> c) & 1u;
@@ -353,6 +422,7 @@ static void lsdj_fx_mix(lsdj_fx_t *f, const int16_t *smp, int32_t *lo, int32_t *
         if (!dry && f->c[c].pan_r != 32768) r = r * f->c[c].pan_r >> 15;
         L += l; R += r;
         if (!dry && f->p.ch[c][FXP_SEND]) send += (l + r) / 2 * (int32_t)f->p.ch[c][FXP_SEND] / 127;
+        if (!dry && f->p.rs[c]) rsend += (l + r) / 2 * (int32_t)f->p.rs[c] / 127;
     }
     if (f->p.m[FXM_MIX] && f->echo) {        /* master echo at half rate (22.05 kHz) */
         f->echo_in += send;
@@ -363,6 +433,16 @@ static void lsdj_fx_mix(lsdj_fx_t *f, const int16_t *smp, int32_t *lo, int32_t *
         }
         L += f->echo_l * (int32_t)f->p.m[FXM_MIX] / 127;
         R += f->echo_r * (int32_t)f->p.m[FXM_MIX] / 127;
+    }
+    if (f->rv_on) {                          /* master reverb at half rate, after the echo */
+        f->rv_in += rsend;
+        if (++f->rv_half == 2u) {
+            f->rv_half = 0;
+            lsdj_fx_rv_tick(f, lsdj_fx_clamp16(f->rv_in / 2));
+            f->rv_in = 0;
+        }
+        L += f->rv_l * (int32_t)f->p.r[FXR_MIX] / 127;
+        R += f->rv_r * (int32_t)f->p.r[FXR_MIX] / 127;
     }
     if (f->p.comp) {                         /* master compressor: peak envelope (attack ~0.4 ms, release ~90 ms),
                                                 4:1 above a threshold the amount lowers (0 .. -16 dB), make-up gain */

@@ -25,6 +25,7 @@
 #define OTA_RANGE_OK(off,n) FL_IN(off,n,0xe0000u,0xe5000u)
 #define FL_RANGE_OK(off,n) (OTA_RANGE_OK(off,n)||FL_IN(off,n,0x97000u,0xe0000u))
 #include "fm1_flash.h"
+#include "fm1_flash_id.h"
 #include "../vendor/felucca/firmware/src/usb.c"
 #include "../vendor/felucca/firmware/src/ota.c"
 /* MIDI IN on the TRS jack (Felucca): clock and transport join the USB ring. */
@@ -47,11 +48,18 @@ static int ota_fread(uint32_t off,void *p,uint32_t n){
     if(off>0x100000u||n>0x100000u-off)return -8;
     uint32_t f=irq_save();int rc=FL_FAR(fl_read_ram)(off,p,n);irq_restore(f);return rc;
 }
+/* The install screen (upd_screen.h), through the game's screen buffer (stopped meanwhile: video_stop). */
+#define UPD_STRIP screen
+#include "upd_screen.h"
 static void ota_show(uint32_t step,int32_t code){
-    (void)code;
-    /* Green progress bands; red on an update failure. */
-    lcd_fill(0,0,240,240,step==9?0xf800:0);
-    if(step<6)lcd_fill(20,100,step*40,24,0x07e0);
+    /* steps 1..4: preparing (ota.c); 5: about to restart into the loader; 9: stopped, nothing committed */
+    if(step<5){upd_screen("PREPARING. NOTHING IS CHANGED YET",(int32_t)(step-1u)*25,0);return;}
+    if(step==5){upd_screen("READY. RESTARTING INTO UPDATE MODE",100,0);return;}
+    upd_screen("STOPPED. NOTHING WAS CHANGED",UPD_NO_BAR,"THE FM-1 CARRIES ON AS BEFORE");
+    if(code!=1)upd_number(0,code);
+    for(uint32_t t=fm1_ticks();fm1_ticks()-t<2500u*24000u;)fm1_wdt_feed();   /* 2.5 s, long enough to read */
+    lcd_fill(0,0,240,240,0);                        /* LSDj draws only the middle 216 rows: black edges */
+    upd_status_shown=0;
 }
 static void ota_commit(const uint8_t *parm){
     video_stop();gb_bootguard.pending=0;usb_detach();fm1_delay_ms(30);fm1_enter_update(parm);
@@ -63,7 +71,7 @@ static void recovery_tick(void){
     if(++sub==5){sub=0;usb_poll();uart_midi_poll();}
 }
 static void recovery_init(void){
-    uint32_t f=irq_save();recovery_flash_ok=FL_FAR(fl_jedec_ram)()==0x856014u;irq_restore(f);
+    uint32_t f=irq_save();recovery_flash_ok=FL_JEDEC_OK(FL_FAR(fl_jedec_ram)());irq_restore(f);
     /* Only stale OTA loader/record sectors; never presets, user data or calibration. */
     if(recovery_flash_ok)ota_boot_cleanup();
     /* TRS MIDI IN: PORTH is also written by the TIMER5 input scan, so no ISR meanwhile */

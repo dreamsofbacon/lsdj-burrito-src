@@ -26,7 +26,7 @@
  * Hooks from the platform (loader.c, ldr_test.c):
  *   ldr_fread(off, p, n)  ldr_erase(off)  ldr_prog(off, p, n)   flash, 0 = ok
  *   ldr_record_clear()    forget the RAM update record
- *   ldr_progress(done, total)
+ *   ldr_progress(phase, done, total)   1: checking (2b), 2: writing (3)
  * plus the ota.c hooks (frames, time, idle). */
 #define LDR_APP_LO 0x4000u
 #define LDR_APP_HI 0x93000u
@@ -41,7 +41,7 @@ static int ldr_fread(uint32_t off, void *p, uint32_t n);
 static int ldr_erase(uint32_t off);
 static int ldr_prog(uint32_t off, const void *p, uint32_t n);
 static void ldr_record_clear(void);
-static void ldr_progress(uint32_t done, uint32_t total);
+static void ldr_progress(uint32_t phase, uint32_t done, uint32_t total);
 
 /* SFC cipher: per 32-byte block, key ^ (block offset >> 2) */
 static void ldr_sfc(uint8_t *p, uint32_t n, uint32_t base_off, uint32_t key)
@@ -97,6 +97,7 @@ static int ldr_check(uint32_t fl_off, uint32_t fl_size, uint32_t want, uint16_t 
         if (ota_read(fl_off + i, b, n))
             return -7;
         crc = ota_crc16(b, n, crc);
+        ldr_progress(1u, i + n, fl_size);
         if (i >= LDR_APP_LO && i < LDR_APP_HI) {     /* (512-byte reads from 0: never across a sector) */
             uint32_t k = (i - LDR_APP_LO) >> 12;
             sc[k] = (uint16_t)ota_crc16(b, n, (i & 0xFFFu) ? sc[k] : 0u);
@@ -161,7 +162,7 @@ static int ldr_session(void)
                 return -11;                              /* verify failed twice */
         }
         done += 0x1000u;
-        ldr_progress(done, LDR_APP_HI - LDR_APP_LO);
+        ldr_progress(2u, done, LDR_APP_HI - LDR_APP_LO);
     }
     /* 4. finish: the host confirms, the record goes, the SPL boots the app */
     for (i = 0; i < 4u; i++)

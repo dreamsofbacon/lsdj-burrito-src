@@ -41,6 +41,15 @@
    op 0x23 CART_READ u32 off -> u32 off, up to 120 slot bytes (last chunk shorter);
                              off must be a multiple of 120, strictly within the slot
    op 0x24 MUTE_SET u8 mute (bit per channel), u8 freeze (0/1)   live only, never saved
+   op 0x2A REVERB_GET     -> u32: the reverb (0.9.97; status 1 before): mix, size, tone, a byte each, low first, and
+                             0 (dev.1-6: input, 0 ALL / 1 SEND; accepted and ignored) (firmware/lsdj_fx_ui.h lsdj_fx_rv_word)
+   op 0x2B REVERB_SET u32 (kept with op 0x16 STORE; status 1 if not valid)
+   op 0x2C PAD_SET u8 buttons   0.9.97: a game controller on the web page: the Game Boy buttons held now (src/gb_port.h
+                             GP_*: A 1, B 2, SELECT 4, START 8, RIGHT 16, LEFT 32, UP 64, DOWN 128), added to the FM-1's
+                             own; let go by themselves LSDJ_LINK_PAD_MS after the last PAD_SET (the page resends held
+                             buttons). Status 1 before 0.9.97.
+   op 0x2D REVERB_SENDS_GET -> u32: each channel's reverb send, a byte each, PU1 low (0.9.97-dev.7; status 1 before)
+   op 0x2E REVERB_SENDS_SET u32 (kept with op 0x16 STORE; status 1 if a byte is over 127)
    Cartridge export reads immutable application data only; never saves, arbitrary
    addresses, flash writes or pauses. Both operations refuse during save import.
    The screen (FM-1_983+; status 1 before): the 160x144 picture the LCD shows, panels
@@ -93,12 +102,14 @@ enum { LSDJ_LINK_INFO = 0x01, LSDJ_LINK_READ, LSDJ_LINK_BEGIN, LSDJ_LINK_CHUNK_O
        LSDJ_LINK_FEAT_GET, LSDJ_LINK_FEAT_SET,
        LSDJ_LINK_LIVE = 0x20, LSDJ_LINK_OP_21, LSDJ_LINK_CART_INFO, LSDJ_LINK_CART_READ, LSDJ_LINK_MUTE_SET,
        LSDJ_LINK_SCREEN_INFO, LSDJ_LINK_SCREEN_ROW, LSDJ_LINK_SCREEN_SYNC, LSDJ_LINK_SCREEN_PIXELS,
-       LSDJ_LINK_SCREEN_FRAME };
+       LSDJ_LINK_SCREEN_FRAME, LSDJ_LINK_REVERB_GET, LSDJ_LINK_REVERB_SET, LSDJ_LINK_PAD_SET,
+       LSDJ_LINK_REVERB_SENDS_GET, LSDJ_LINK_REVERB_SENDS_SET };
 #define LSDJ_LINK_SCREEN_W     160u
 #define LSDJ_LINK_SCREEN_H     144u
 #define LSDJ_LINK_SCREEN_BANDS 18u   /* LSDj's character rows */
 #define LSDJ_LINK_PUSH     0x80000000u   /* SCREEN_SYNC force bit 31 (FM-1_990) */
 #define LSDJ_LINK_PUSH_MS  3000u
+#define LSDJ_LINK_PAD_MS   500u   /* PAD_SET: held buttons let go this long after the last one */
 enum { LSDJ_LINK_OK = 0, LSDJ_LINK_BAD = 1, LSDJ_LINK_STATE = 2, LSDJ_LINK_CRC = 3, LSDJ_LINK_FLASH = 4 };
 
 typedef struct {
@@ -137,6 +148,11 @@ typedef struct {
     int (*screen_stream)(uint32_t bands, uint8_t round); /* send these bands' rows after this reply (SCREEN_SYNC;
                                                     bit 31: LSDJ_LINK_PUSH, FM-1_990);
                                                     0 over a link that cannot (status 1); NULL: not supported */
+    uint32_t (*rv_get)(void);                    /* the reverb word (0.9.97); NULL: not supported (status 1) */
+    int (*rv_set)(uint32_t v);
+    void (*pad_set)(uint8_t buttons);            /* PAD_SET (0.9.97); NULL: not supported (status 1) */
+    uint32_t (*rvs_get)(void);                   /* the reverb sends word (0.9.97-dev.7); NULL: not supported (status 1) */
+    int (*rvs_set)(uint32_t v);
 } lsdj_link_io_t;
 
 /* Picture pixel (x, y) from the LCD image: 240x216, LCD row y' shows picture row y'*2/3 (so
@@ -404,18 +420,28 @@ static uint32_t lsdj_link_handle(lsdj_link_t *s, const lsdj_link_io_t *io, const
         break;
     }
     case LSDJ_LINK_MIDI_GET:
-    case LSDJ_LINK_FEAT_GET: {
-        uint32_t (*get)(void) = op == LSDJ_LINK_MIDI_GET ? io->midi_get : io->feat_get;
+    case LSDJ_LINK_FEAT_GET:
+    case LSDJ_LINK_REVERB_GET:
+    case LSDJ_LINK_REVERB_SENDS_GET: {
+        uint32_t (*get)(void) = op == LSDJ_LINK_MIDI_GET ? io->midi_get : op == LSDJ_LINK_FEAT_GET ? io->feat_get :
+                                op == LSDJ_LINK_REVERB_GET ? io->rv_get : io->rvs_get;
         if (an || !get) { status = LSDJ_LINK_BAD; break; }
         n = lsdj_link_put32(r, n, get());
         break;
     }
     case LSDJ_LINK_MIDI_SET:
-    case LSDJ_LINK_FEAT_SET: {
-        int (*set)(uint32_t) = op == LSDJ_LINK_MIDI_SET ? io->midi_set : io->feat_set;
+    case LSDJ_LINK_FEAT_SET:
+    case LSDJ_LINK_REVERB_SET:
+    case LSDJ_LINK_REVERB_SENDS_SET: {
+        int (*set)(uint32_t) = op == LSDJ_LINK_MIDI_SET ? io->midi_set : op == LSDJ_LINK_FEAT_SET ? io->feat_set :
+                               op == LSDJ_LINK_REVERB_SET ? io->rv_set : io->rvs_set;
         if (!set || !lsdj_link_unpack(args, an, d, 4) || !set(lsdj_link_le32(d))) status = LSDJ_LINK_BAD;
         break;
     }
+    case LSDJ_LINK_PAD_SET:
+        if (!io->pad_set || !lsdj_link_unpack(args, an, d, 1)) status = LSDJ_LINK_BAD;
+        else io->pad_set(d[0]);
+        break;
     case LSDJ_LINK_MUTE_SET:
         if (!io->mute_set || !lsdj_link_unpack(args, an, d, 2) || !io->mute_set(d[0], d[1])) status = LSDJ_LINK_BAD;
         break;

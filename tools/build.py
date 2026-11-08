@@ -12,12 +12,16 @@ ROOT=Path(__file__).resolve().parents[1]
 # and the hub show it. The package identity is FM-1_537 + two digits each (FM-1_537000996, like other
 # firmwares' FM-1_<prefix><MMmmpp>); the short name FM-1_ + MAJOR*10000 + MINOR*100 + PATCH (FM-1_996, so
 # the numbers the page compares keep counting: 995 was FM-1_5370995) fits link INFO's 8 bytes up to 0.99.99.
-LSDJ_RELEASE='0.9.96'
+LSDJ_RELEASE='0.9.97'
+# Test builds (the dev branch, published only to the dev page): the NEXT release's numbers and LSDJ_DEV = 1, 2, ...;
+# the splash and template.json say 0.9.97-dev.N. A release has LSDJ_DEV = 0 (harness/publish_prepare.sh checks).
+LSDJ_DEV=0
 _maj,_min,_pat=(int(v) for v in LSDJ_RELEASE.split('.'))
 assert all(0<=v<100 for v in (_maj,_min,_pat))
 LSDJ_VERSION='FM-1_'+str(_maj*10000+_min*100+_pat)
 assert len(LSDJ_VERSION)<=8,'the short name must fit link INFO (8 bytes): see firmware/lsdj_link.h'
 LSDJ_SLOT_PRODUCT=f'FM-1_537{_maj:02}{_min:02}{_pat:02}'
+LSDJ_RELEASE_NAME=LSDJ_RELEASE+(f'-dev.{LSDJ_DEV}' if LSDJ_DEV else '')
 DEFAULT_ZIG=ROOT.parent/'Felucca/Felucca-website/build/wasm-tools/ziglang/zig.exe'
 # JieLi toolchain: $JIELI_TOOLCHAIN, else ~/.jieli/toolchain (Dinghy's get_toolchain.sh), else the upstream path.
 DEFAULT_TC=next((str(p) for p in [Path.home()/'.jieli/toolchain'] if p.is_dir()),
@@ -105,7 +109,7 @@ def native(a,sources):
         storage=rom+b'\xff'*(capacity-len(rom))
     sparse=('' if bank_map is None else f'#define CART_SPARSE_BANKS {len(bank_map)}u\n'
             'static const unsigned char cart_bank_map[] = {'+','.join(map(str,bank_map))+'};\n')
-    if a.lsdj_slot:sparse=f'#define CART_SLOT_CAPACITY {capacity}u\n#define CART_SLOT_PRODUCT "{LSDJ_SLOT_PRODUCT}"\n#define CART_SLOT_VERSION "{LSDJ_VERSION}"\n#define CART_SLOT_RELEASE "{LSDJ_RELEASE}"\n'
+    if a.lsdj_slot:sparse=f'#define CART_SLOT_CAPACITY {capacity}u\n#define CART_SLOT_PRODUCT "{LSDJ_SLOT_PRODUCT}"\n#define CART_SLOT_VERSION "{LSDJ_VERSION}"\n#define CART_SLOT_RELEASE "{LSDJ_RELEASE_NAME}"\n'
     (out/'cartridge.h').write_text('/* Local cartridge; never publish game ROMs. */\n'+sparse+'static const unsigned char cartridge[] = {\n'+
         ',\n'.join(','.join(str(b) for b in storage[i:i+32]) for i in range(0,len(storage),32))+'\n};\n')
     if a.target=='smk37':
@@ -114,7 +118,7 @@ def native(a,sources):
     rel=out.relative_to(ROOT).as_posix()
     def tc(tool,*args):
         run(['wsl','-e',f'{a.toolchain}/{tool}',*args])
-    flags=['-target','pi32v2','-std=c99','-Os','-fno-builtin','-ffunction-sections','-fdata-sections','-DGB_HARDWARE=1','-DMUSICCOACH_DUAL_CORE=1',
+    flags=['-target','pi32v2','-std=c99','-Oz','-fno-builtin','-ffunction-sections','-fdata-sections','-DGB_HARDWARE=1','-DMUSICCOACH_DUAL_CORE=1',
         '-DMINIGB_APU_AUDIO_FORMAT_S16SYS','-DAUDIO_SAMPLE_RATE=44100',
         '-Isrc','-Isrc/freestanding','-Ivendor/peanut-gb','-Ivendor/felucca/firmware/hal','-I'+rel,
         '-DGB_SMK37='+str(int(a.target=='smk37')),'-Wall','-Wno-unused-function']
@@ -123,7 +127,7 @@ def native(a,sources):
     objects=[]
     for i,src in enumerate(inputs):
         obj=f'{rel}/{i}.o'
-        source_flags=[('-O2' if f=='-Os' else f) for f in flags] if src in sources else flags
+        source_flags=[('-O2' if f=='-Oz' else f) for f in flags] if src in sources else flags
         tc('pi32v2/bin/clang',*source_flags,'-c',src,'-o',obj);objects.append(obj)
     elf=f'{rel}/gb-{a.target}.elf'
     tc('pi32v2/bin/ld','--gc-sections','-T','vendor/felucca/firmware/app.ld',*objects,'-o',elf)
@@ -161,7 +165,7 @@ def native(a,sources):
       'usb_updater':True,'save_persistence':'session RAM only'}
     result['app_bytes']=len(image)
     if a.lsdj_slot:
-        result.update(lsdj_slot=1,product=LSDJ_SLOT_PRODUCT,version=LSDJ_VERSION,release=LSDJ_RELEASE,cartridge='empty LSDj slot',
+        result.update(lsdj_slot=1,product=LSDJ_SLOT_PRODUCT,version=LSDJ_VERSION,release=LSDJ_RELEASE_NAME,cartridge='empty LSDj slot',
                       compatibility='experimental generic; verified cursor profile only, other memory helpers disabled')
     if a.target=='smk37':result.update(usb_protocol='smk37-ram-v2',product=loader['product'],loader=loader)
     (out/'manifest.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))

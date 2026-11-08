@@ -71,6 +71,16 @@ int main(void) {
     assert(lsdj_midi_cc(&m, &fx, pk(0xB5, 78, 30)) && fx.p.q[1][FXQ_WARM] == 30 && fx.p.ch[1][FXP_TYPE] == 1);   /* PU2 warm: LP on */
     assert(lsdj_midi_cc(&m, &fx, pk(0xB7, 79, 96)) && fx.p.q[3][FXQ_DIST] == 3);   /* NOI fuzz */
     assert(lsdj_midi_cc(&m, &fx, pk(0xB6, 20, 40)) && fx.p.comp == 40 && fx.active);
+    /* 0.9.97 reverb, from any of the four: 21 MIX, 22 SIZE, 23 TONE; per channel 92 its REVERB SEND (dev.7; 24 was INPUT) */
+    assert(lsdj_midi_cc(&m, &fx, pk(0xB5, 21, 90)) && fx.p.r[FXR_MIX] == 90);
+    assert(lsdj_midi_cc(&m, &fx, pk(0xB7, 22, 120)) && fx.p.r[FXR_SIZE] == 120 && fx.rv_g == 9270 + 120 * (15775 - 9270) / 127);
+    assert(lsdj_midi_cc(&m, &fx, pk(0xB4, 23, 10)) && fx.p.r[FXR_TONE] == 10);
+    assert(lsdj_midi_cc(&m, &fx, pk(0xB6, 92, 100)) && fx.p.rs[2] == 100 && !fx.p.rs[0]);   /* WAV's reverb send */
+    assert(!lsdj_midi_cc(&m, &fx, pk(0xB6, 24, 100)));                                     /* 24: nothing now */
+    assert(lsdj_midi_fxk_of_cc(21) == FXK_RV_MIX && lsdj_midi_cc_of_fxk(FXK_RV_SEND) == 92 && lsdj_midi_fxk_of_cc(92) == FXK_RV_SEND &&
+           lsdj_midi_cc_value(&fx, FXK_RV_SEND, 77) == 77);
+    fx.p.rs[2] = 0;
+    fx.p.r[FXR_MIX] = 0; lsdj_fx_update(&fx);
     assert(lsdj_midi_cc(&m, &fx, pk(0xB7, 91, 50)) && fx.p.ch[3][FXP_SEND] == 50);
     assert(lsdj_midi_cc(&m, &fx, pk(0xB5, 80, 0)) && (fx.p.fx_off & 2));          /* PU2 dry */
     assert(lsdj_midi_cc(&m, &fx, pk(0xB5, 80, 127)) && !(fx.p.fx_off & 2));

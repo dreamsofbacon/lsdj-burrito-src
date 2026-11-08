@@ -99,7 +99,7 @@ static int ldr_prog(uint32_t off, const void *p, uint32_t n)
     return 0;
 }
 static void ldr_record_clear(void) { record_cleared++; }
-static void ldr_progress(uint32_t done, uint32_t total) { (void)done; (void)total; }
+static void ldr_progress(uint32_t phase, uint32_t done, uint32_t total) { (void)phase; (void)done; (void)total; }
 #include "../firmware/loader/ldr_core.c"
 
 static uint8_t *load_logical(const char *path, size_t *len)

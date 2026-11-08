@@ -13,6 +13,7 @@
 #endif
 
 static uint8_t echo[LSDJ_FX_ECHO_LEN];
+static int16_t rvbuf[LSDJ_FX_RV_LEN];
 static lsdj_fx_t F;
 #define ALL_LR 0x3800u | 0x0700u | 0xFFu       /* both volumes 7, every channel left and right */
 
@@ -393,6 +394,69 @@ int main(void) {
     for (int i = 0; i < 44100 * 20; i++) { int16_t s[5] = {(int16_t)(i & 1023), (int16_t)-(i & 511), (int16_t)(i % 777), (int16_t)(i * 7 % 1000), (int16_t)ALL_LR}; lsdj_fx_mix(&F, s, &l, &r); sink += l; }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     printf("cost, everything on: %.1f ns per sample on this PC\n", ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec)) / (44100.0 * 20));
-    puts("PASS: effects bypass bit-exact, filters, stability, echo, crush, decimate");
+    /* 0.9.97 reverb: an impulse rings and fades, a bigger SIZE rings longer, left and right differ, loud input
+       for a long time stays bounded and fades to silence after; MIX 0 is the plain mix again. */
+    {
+        int16_t s0[5] = {0, 0, 0, 0, (int16_t)ALL_LR};
+        reset(); F.p.r[FXR_MIX] = 127; lsdj_fx_update(&F); assert(!F.active);   /* no lines: nothing to do */
+        double tail[2];
+        for (int size = 0; size < 2; size++) {
+            reset(); lsdj_fx_set_reverb(&F, rvbuf); F.p.r[FXR_MIX] = 127; F.p.r[FXR_SIZE] = size ? 120 : 20;
+            for (int c = 0; c < 4; c++) F.p.rs[c] = 127;
+            lsdj_fx_update(&F); assert(F.active && F.rv_on);
+            double e_early = 0, e_late = 0, lr = 0; int32_t l, r;
+            for (int i = 0; i < 44100 * 3; i++) {
+                int16_t s[5] = {0, 0, 0, 0, (int16_t)ALL_LR};
+                if (i < 64) s[0] = s[1] = 900;                   /* a click */
+                lsdj_fx_mix(&F, s, &l, &r);
+                if (i > 4410 && i < 8820) e_early += (double)l * l;
+                if (i > 44100 && i < 48510) e_late += (double)l * l;
+                if (i > 4410 && i < 44100) lr += fabs((double)l - r);
+            }
+            assert(e_early > 0 && lr > 0);
+            tail[size] = e_late / e_early;
+            printf("reverb SIZE %3d: energy after 1 s / at 0.1 s = %.2e\n", size ? 120 : 20, tail[size]);
+        }
+        assert(tail[1] > tail[0] * 100 && tail[0] < 1e-3);
+        /* loud noise on every channel, 20 s at full size and bright: no overflow runaway */
+        reset(); lsdj_fx_set_reverb(&F, rvbuf); F.p.r[FXR_MIX] = 127; F.p.r[FXR_SIZE] = 127; F.p.r[FXR_TONE] = 127;
+        for (int c = 0; c < 4; c++) F.p.rs[c] = 127;
+        lsdj_fx_update(&F);
+        int32_t l, r, peak = 0;
+        for (int i = 0; i < 44100 * 20; i++) {
+            int16_t s[5]; for (int c = 0; c < 4; c++) s[c] = (int16_t)(rand() % 2049 - 1024); s[4] = (int16_t)ALL_LR;
+            lsdj_fx_mix(&F, s, &l, &r);
+        }
+        for (int i = 0; i < 44100 * 30; i++) { lsdj_fx_mix(&F, s0, &l, &r); if (i > 44100 * 29 && abs(l) > peak) peak = abs(l); }
+        printf("reverb: 20 s of loud noise at full size, then 29 s of silence: peak %d\n", peak);
+        assert(peak < 64);
+        /* the sends (0.9.97-dev.7): a channel without its send adds nothing; with it, it rings on; a dry channel
+           (Channel FX off) sends nothing either */
+        reset(); lsdj_fx_set_reverb(&F, rvbuf); F.p.r[FXR_MIX] = 127; F.p.rs[1] = 127; lsdj_fx_update(&F);
+        { int16_t t[5] = {0, 0, 0, 0, (int16_t)ALL_LR}; int32_t a, b, x, y; int same = 1;
+          for (int i = 0; i < 20000; i++) { t[0] = (int16_t)(rand() % 2001 - 1000); lsdj_fx_mix(&F, t, &a, &b); plain(t, &x, &y); same &= a == x && b == y; }
+          assert(same);   /* PU1 played, only PU2 sends */
+          double tail = 0;
+          for (int i = 0; i < 20000; i++) { t[0] = 0; t[1] = (int16_t)(i < 4000 ? rand() % 2001 - 1000 : 0); lsdj_fx_mix(&F, t, &a, &b);
+                                            if (i > 6000) tail += (double)a * a; }
+          assert(tail > 0);   /* PU2's send: a tail after it stops */
+          F.p.fx_off = 2; lsdj_fx_update(&F);
+          for (int i = 0; i < 44100 * 8; i++) { t[1] = 0; lsdj_fx_mix(&F, t, &a, &b); }   /* (the tail fades) */
+          same = 1;
+          for (int i = 0; i < 20000; i++) { t[1] = (int16_t)(rand() % 2001 - 1000); lsdj_fx_mix(&F, t, &a, &b); plain(t, &x, &y); same &= a == x && b == y; }
+          assert(same);   /* PU2 dry: no send */
+          F.p.fx_off = 0; }
+        /* MIX back to 0: the plain mix again; on again: starts silent */
+        F.p.r[FXR_MIX] = 0; lsdj_fx_update(&F); assert(!F.active);
+        F.p.r[FXR_MIX] = 127; lsdj_fx_update(&F);
+        { int32_t a, b; lsdj_fx_mix(&F, s0, &a, &b); assert(a == 0 && b == 0); }
+        /* time per 44.1 kHz sample, reverb only (host; the FM-1 is slower) */
+        reset(); lsdj_fx_set_reverb(&F, rvbuf); F.p.r[FXR_MIX] = 100; F.p.rs[0] = 127; lsdj_fx_update(&F);
+        struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (int i = 0; i < 44100 * 10; i++) { int16_t s[5] = {(int16_t)(i & 511), 0, 0, 0, (int16_t)ALL_LR}; lsdj_fx_mix(&F, s, &l, &r); }
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        printf("reverb: %.1f ns a sample on this host\n", ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec)) / (44100.0 * 10));
+    }
+    puts("PASS: effects bypass bit-exact, filters, stability, echo, crush, decimate, reverb");
     return 0;
 }

@@ -58,9 +58,17 @@ static const volatile uint16_t *io_screen(uint32_t *shown) { *shown = 4242; retu
 static uint32_t stream_bands = 0xDEAD; static int stream_ok = 1;   /* 0: a link that cannot stream */
 static uint8_t stream_round;
 static int io_stream(uint32_t bands, uint8_t round) { if (!stream_ok) return 0; stream_bands = bands; stream_round = round; return 1; }
+static uint32_t rv_word = 0x00404000u;   /* 0.9.97: mix 0, size 64, tone 64, input ALL */
+static uint32_t io_rget(void) { return rv_word; }
+static int io_rset(uint32_t v) { if ((v & 255u) > 127u || ((v >> 8) & 255u) > 127u || ((v >> 16) & 255u) > 127u || (v >> 24) > 1u) return 0; rv_word = v; return 1; }
+static uint32_t rvs_word;   /* 0.9.97-dev.7: the reverb sends */
+static uint32_t io_vsget(void) { return rvs_word; }
+static int io_vsset(uint32_t v) { for (int c = 0; c < 4; c++) if (((v >> (8 * c)) & 255u) > 127u) return 0; rvs_word = v; return 1; }
+static int pad_now = -1;   /* 0.9.97: the web page's controller */
+static void io_pset(uint8_t b) { pad_now = b; }
 static const lsdj_link_io_t io = {io_save, io_size, io_pause, io_store, io_load, io_reset, io_fw, io_title, io_known,
                                   io_sget, io_sset, io_fget, io_fset, io_tget, io_tset, io_cstore, io_live, io_mget, io_mset, io_cart, io_mute,
-                                  io_eget, io_eset, io_screen, io_stream};
+                                  io_eget, io_eset, io_screen, io_stream, io_rget, io_rset, io_pset, io_vsget, io_vsset};
 /* A SCREEN_PIXELS message -> row (or -1), px; checks the framing. Status in *status. */
 static int unpixels(const uint8_t *m, uint32_t n, uint16_t px[LSDJ_LINK_SCREEN_W], unsigned *status) {
     assert(n >= 10 && m[0] == 0xf0 && m[1] == 0x7d && m[2] == 'G' && m[3] == 'S' && m[4] == LSDJ_LINK_SCREEN_PIXELS && m[n - 1] == 0xf7);
@@ -204,6 +212,31 @@ int main(void) {
       assert(req(LSDJ_LINK_MIDI_SET, b, 4, 0) == LSDJ_LINK_OK && midi_word == 0x4D028001u);
       assert(req(LSDJ_LINK_MIDI_GET, 0, 0, 0) == LSDJ_LINK_OK && rd(0) == 0x01 && rd(3) == 0x4D);
       uint8_t bad[4] = {0, 0, 0, 0x5A}; assert(req(LSDJ_LINK_MIDI_SET, bad, 4, 0) == LSDJ_LINK_BAD); }
+    /* PAD_SET (0.9.97): one byte, the buttons held; older firmware answers status 1 */
+    { uint8_t b[1] = {1 | 8 | 64};
+      assert(req(LSDJ_LINK_PAD_SET, b, 1, 0) == LSDJ_LINK_OK && pad_now == 73);
+      b[0] = 0; assert(req(LSDJ_LINK_PAD_SET, b, 1, 0) == LSDJ_LINK_OK && pad_now == 0);
+      b[0] = 0xFF; assert(req(LSDJ_LINK_PAD_SET, b, 1, 0) == LSDJ_LINK_OK && pad_now == 255);
+      assert(req(LSDJ_LINK_PAD_SET, 0, 0, 0) == LSDJ_LINK_BAD && pad_now == 255);   /* no byte */
+      uint8_t q[6] = {0x7d, 'G', 'S', LSDJ_LINK_PAD_SET, 1, 0};
+      rn = lsdj_link_handle(&st, &io_old, q, 6, 0, reply); assert(reply[5] == LSDJ_LINK_BAD); }
+    /* REVERB_GET / REVERB_SET (0.9.97); older firmware answers status 1 */
+    { uint8_t b[4] = {100, 90, 30, 1};
+      assert(req(LSDJ_LINK_REVERB_GET, 0, 0, 0) == LSDJ_LINK_OK && rd32(0) == 0x00404000u);
+      assert(req(LSDJ_LINK_REVERB_SET, b, 4, 0) == LSDJ_LINK_OK && rv_word == 0x011E5A64u);
+      assert(req(LSDJ_LINK_REVERB_GET, 0, 0, 0) == LSDJ_LINK_OK && rd32(0) == 0x011E5A64u);
+      uint8_t bad[4] = {100, 90, 30, 2}; assert(req(LSDJ_LINK_REVERB_SET, bad, 4, 0) == LSDJ_LINK_BAD && rv_word == 0x011E5A64u);
+      assert(req(LSDJ_LINK_REVERB_SET, b, 3, 0) == LSDJ_LINK_BAD && req(LSDJ_LINK_REVERB_GET, b, 1, 0) == LSDJ_LINK_BAD);
+      uint8_t q[4] = {0x7d, 'G', 'S', LSDJ_LINK_REVERB_GET};
+      rn = lsdj_link_handle(&st, &io_old, q, 4, 0, reply); assert(reply[5] == LSDJ_LINK_BAD); }
+    /* REVERB_SENDS_GET / _SET (0.9.97-dev.7): a byte per channel, each 0..127; older firmware answers status 1 */
+    { uint8_t b[4] = {5, 127, 0, 64};
+      assert(req(LSDJ_LINK_REVERB_SENDS_GET, 0, 0, 0) == LSDJ_LINK_OK && rd32(0) == 0);
+      assert(req(LSDJ_LINK_REVERB_SENDS_SET, b, 4, 0) == LSDJ_LINK_OK && rvs_word == 0x40007F05u);
+      assert(req(LSDJ_LINK_REVERB_SENDS_GET, 0, 0, 0) == LSDJ_LINK_OK && rd32(0) == 0x40007F05u);
+      uint8_t bad[4] = {5, 128, 0, 0}; assert(req(LSDJ_LINK_REVERB_SENDS_SET, bad, 4, 0) == LSDJ_LINK_BAD && rvs_word == 0x40007F05u);
+      uint8_t q[4] = {0x7d, 'G', 'S', LSDJ_LINK_REVERB_SENDS_GET};
+      rn = lsdj_link_handle(&st, &io_old, q, 4, 0, reply); assert(reply[5] == LSDJ_LINK_BAD); }
     /* FEAT_GET / FEAT_SET: the feature switches (FM-1_979); older firmware answers status 1 */
     { uint8_t b[4] = {0x03, 0x02, 0x00, 0x46};
       assert(req(LSDJ_LINK_FEAT_GET, 0, 0, 0) == LSDJ_LINK_OK && rd32(0) == 0x460001C6u);

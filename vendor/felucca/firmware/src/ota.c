@@ -29,6 +29,13 @@
 #define OTA_LDR_DCRC 0x5881u
 #define OTA_LDR_LEN 0x4DE1u
 #define OTA_FRAME_MAX 640u                       /* 512-B response = 605 wire bytes */
+/* Going back to stock (LSDJ Burrito): an FM-1 whose 16 KiB head is V15's may take V16's head
+ * from the official loader, the same step as M-VAVE's own V15 -> V16 update. Only that exact
+ * pair, each head pinned by CRC-32 and CRC-16 of its 16 KiB; any other differing head stays -5. */
+#define OTA_HEAD_V15_CRC32 0x3A04AD23u           /* FM-1_015 (flash.bin 0x93000) */
+#define OTA_HEAD_V15_CRC16 0x3FEEu
+#define OTA_HEAD_V16_CRC32 0x08316064u           /* FM-1_016, 2026-10-21 (flash.bin 0xA9000) */
+#define OTA_HEAD_V16_CRC16 0x22B0u
 
 static int ota_wire_send(const uint8_t *p, uint32_t n);
 static int ota_frame_get(const uint8_t **p, uint32_t *n);
@@ -55,6 +62,17 @@ static uint32_t ota_crc16(const uint8_t *p, uint32_t n, uint32_t c)   /* poly 0x
         for (i = 0; i < 8u; i++)
             c = c & 0x8000u ? (c << 1) ^ 0x1021u : c << 1;
         c &= 0xFFFFu;
+    }
+    return c;
+}
+
+static uint32_t ota_crc32(const uint8_t *p, uint32_t n, uint32_t c)   /* IEEE, reflected; start ~0, end ^ ~0 */
+{
+    uint32_t i;
+    while (n--) {
+        c ^= *p++;
+        for (i = 0; i < 8u; i++)
+            c = c & 1u ? (c >> 1) ^ 0xEDB88320u : c >> 1;
     }
     return c;
 }
@@ -280,14 +298,21 @@ static int ota_stage(void)                       /* steps 1..6; 0 = host said su
         own = ota_memeq(b + i, (const uint8_t *)"FELUCCA-LOADER-1", 16) && ota_rd32(b + 0x20 + 4) <= 0x14000u;
     if (!official && !own)
         return -7;
-    if (official) {                    /* the official loader writes the head: it must equal ours */
-        ota_show(2, 0);
+    if (official) {                    /* the official loader writes the head: it must equal ours, */
+        uint32_t same = 1, dev32 = 0xFFFFFFFFu, pkg32 = 0xFFFFFFFFu, dev16 = 0, pkg16 = 0;
+        ota_show(2, 0);                /* or be V16's on an FM-1 with V15's (OTA_HEAD_V15/V16) */
         for (i = 0; i < 0x4000u; i += 512u) {
             if (ota_read(fl_off + i, b, 512) || ota_fread(i, mine, 512))
                 return -4;
-            if (!ota_memeq(b, mine, 512))
-                return -5;
+            same &= (uint32_t)ota_memeq(b, mine, 512);
+            pkg32 = ota_crc32(b, 512, pkg32);
+            pkg16 = ota_crc16(b, 512, pkg16);
+            dev32 = ota_crc32(mine, 512, dev32);
+            dev16 = ota_crc16(mine, 512, dev16);
         }
+        if (!same && !((dev32 ^ 0xFFFFFFFFu) == OTA_HEAD_V15_CRC32 && dev16 == OTA_HEAD_V15_CRC16 &&
+                       (pkg32 ^ 0xFFFFFFFFu) == OTA_HEAD_V16_CRC32 && pkg16 == OTA_HEAD_V16_CRC16))
+            return -5;
     }
     /* 4. stage the package's loader: erase, body, verify, head last */
     ota_show(3, 0);

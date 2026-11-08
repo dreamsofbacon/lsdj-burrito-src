@@ -5,6 +5,8 @@
  * It is a USB-MIDI device "Felucca Update" (1209:0002) that answers the
  * M-UPGRADE update protocol as "ota-FM-1_900" (hosts look for "ota-"), and
  * writes the app area only (ldr_core.c). The UBOOT soft key works here too.
+ * LSDJ Burrito: the screen says what is going on, with a progress bar and DO NOT UNPLUG (upd_screen.h); after
+ * the first LCD timeout it draws no more, so a panel that does not answer cannot hold up the update.
  * Single compilation unit. */
 #include <stdint.h>
 #define FELUCCA_LOADER 1
@@ -22,6 +24,13 @@
 #include "fm1_flash.h"
 #include "../src/libc.c"
 #include "../src/usb.c"
+#include "fm1_lcd_hw.h"
+#include "../src/lcd.c"
+static uint16_t ldr_strip[240u * 21u];             /* one line of the screen on its way to the LCD */
+#define UPD_STRIP ldr_strip
+#define UPD_OK() (fm1_lcd_timeouts == 0u)
+#include "../../../../firmware/upd_screen.h"
+typedef char ldr_strip_fits[sizeof ldr_strip / sizeof ldr_strip[0] >= UPD_STRIP_PX ? 1 : -1];
 
 static uint32_t ldr_ms(void)   /* monotonic ms; survives the TIMER4 wrap (178.9 s) */
 {
@@ -72,7 +81,16 @@ static void ldr_record_clear(void)
 {
     fm1_updata_parm_clear();                        /* CRC 0: the SPL ignores it on a warm reset */
 }
-static void ldr_progress(uint32_t done, uint32_t total) { (void)done; (void)total; ldr_poll(); }
+/* checking the whole package: 0..40 %; writing (it reads everything again): 40..100 % */
+static void ldr_progress(uint32_t phase, uint32_t done, uint32_t total)
+{
+    uint32_t p = total ? done / (total / 100u + 1u) : 0u;          /* 0..99 (no 64-bit maths) */
+    if (phase == 1u)
+        upd_screen("CHECKING THE NEW FIRMWARE", (int32_t)(p * 40u / 100u), 0);
+    else
+        upd_screen("WRITING THE NEW FIRMWARE", (int32_t)(40u + p * 60u / 100u), 0);
+    ldr_poll();
+}
 #include "ldr_core.c"
 
 extern uint32_t _bss_start[], _bss_end[];
@@ -81,6 +99,10 @@ void ldr_main(void)
 {
     fm1_wdt_arm(0x0D);                              /* ~8 s, fed by ldr_poll */
     fm1_time_init();
+    lcd_init();                                     /* (also after a power cut: the SPL runs us again) */
+    fm1_wdt_feed();
+    upd_screen("UPDATE MODE: WAITING FOR THE INSTALLER", UPD_NO_BAR, 0);
+    fm1_wdt_feed();
     usb_start();
     for (;;) {
         ldr_poll();
@@ -93,12 +115,16 @@ void ldr_main(void)
         ota_service();                              /* handshake */
         if (usb.ota_req) {
             usb.ota_req = 0;
-            if (ldr_session() == 0) {
+            int rc = ldr_session();
+            if (rc == 0) {
+                upd_screen("DONE. RESTARTING", 100, 0);
                 fm1_delay_ms(200);                  /* the "success" reply leaves */
                 usb_detach();
                 fm1_delay_ms(30);
                 fm1_core_reset();                   /* the SPL boots the new app */
             }
+            upd_screen("STOPPED. TRY THE INSTALL AGAIN", UPD_NO_BAR, 0);
+            upd_number(0, rc);
         }
     }
 }

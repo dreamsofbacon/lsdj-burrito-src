@@ -3,13 +3,17 @@
    the SELECT knob turns the pages. Each change pops up four bars (one per knob,
    lined up under LSDj's four channel columns: firmware/lsdj_overlay.h).
    Two areas (FM-1_984). Turning a knob or SELECT pops up the channel pages FILTER, DRIVE,
-   LFO, LO-FI (each channel sends to the shared echo from FILTER K2, next to its FX on/off)
-   for a moment; the FX button opens the master pages MASTER (ALL FX, COMP, echo MIX and
-   TIME), ECHO, ECHO MOD, with a channel strip: C4-F4 mute PU1 PU2 WAV NOI, until FX again.
+   LFO, LO-FI (each channel's echo send is LO-FI K3; every effect is on one page only, 0.9.97)
+   for a moment; the FX button opens the master pages MASTER (ALL FX, COMP, FREEZE), ECHO,
+   ECHO MOD, REVERB (0.9.97), with a channel strip: C4-F4 mute PU1 PU2 WAV NOI, until FX again.
    SELECT turns the pages of the area shown. (982: FX = channel pages, master, closed.)
    SELECT stops at the first and last page (PAGE WRAP on: it goes round).
    Per-channel effects act on the target: the channel under LSDj's cursor by
-   default. Packs the setup into 17 32-bit words for the save store (11 before
+   default. LSDj moves that cursor between channels only on its SONG screen, so the SELECT
+   button (printed SELECT; not the SELECT knob) picks a channel from any screen (0.9.97):
+   PU1 > PU2 > WAV > NOI > back to the cursor. Moving LSDj's cursor to another channel goes back
+   to following it too; a pick is never saved.
+   Packs the setup into 18 32-bit words for the save store (17 before 0.9.97, 11 before
    alpha 66: still read).
    Pure logic: tests/lsdj_fx_ui.c. */
 #pragma once
@@ -22,34 +26,44 @@ enum { FXK_CUTOFF, FXK_RESO, FXK_DRIVE, FXK_CRUSH, FXK_DECIM, FXK_SEND,         
        FXK_TYPE, FXK_FXON, FXK_SYNC, FXK_MODE, FXK_FREEZE,                         /* choices */
        /* alpha 66: per channel (warm, LFO rate and depth 0..127; distortion, shape, destination choices),
           and the master compressor (0..127) */
-       FXK_WARM, FXK_LFO_RATE, FXK_LFO_DEPTH, FXK_DIST, FXK_LFO_SHAPE, FXK_LFO_DEST, FXK_COMP, FXK_ALLON, FXK_COUNT };
+       FXK_WARM, FXK_LFO_RATE, FXK_LFO_DEPTH, FXK_DIST, FXK_LFO_SHAPE, FXK_LFO_DEST, FXK_COMP, FXK_ALLON,
+       /* 0.9.97: the master reverb (mix, size, tone 0..127), and per channel its send (dev.7; dev.1-6: INPUT) */
+       FXK_RV_MIX, FXK_RV_SIZE, FXK_RV_TONE, FXK_RV_SEND, FXK_COUNT };
 #define FXK_NONE FXK_COUNT
 static const char *const lsdj_fxk_name[FXK_COUNT + 1] = {
     "CUTOFF", "RESO", "DRIVE", "CRUSH", "DECIMATE", "ECHO SEND", "ECHO TIME", "ECHO FDBK", "ECHO MIX",
     "ECHO TONE", "ECHO WOBBLE", "FILTER", "CHANNEL FX", "ECHO SYNC", "ECHO MODE", "FREEZE",
-    "WARM", "LFO RATE", "LFO DEPTH", "DISTORT", "SHAPE", "LFO TO", "COMPRESSOR", "ALL FX", "" };
+    "WARM", "LFO RATE", "LFO DEPTH", "DISTORT", "SHAPE", "LFO TO", "COMPRESSOR", "ALL FX",
+    "REVERB MIX", "REVERB SIZE", "REVERB TONE", "REVERB SEND", "" };
 static const char *const lsdj_fxk_short[FXK_COUNT + 1] = {   /* 2 characters, over the bars (LSDj's 2-wide columns) */
     "CT", "RS", "DR", "CR", "DC", "SN", "TM", "FB", "MX", "TN", "WB", "TY", "FX",
-    "SY", "MD", "FZ", "WM", "RT", "DP", "DS", "SH", "TO", "CP", "FX", "" };
+    "SY", "MD", "FZ", "WM", "RT", "DP", "DS", "SH", "TO", "CP", "FX", "MX", "SZ", "TN", "RV", "" };
 
 static const char *const lsdj_fxk_label[FXK_COUNT + 1] = {   /* up to 6 characters: the knob names on LSDj's bottom rows */
     "CUTOFF", "RESO", "DRIVE", "CRUSH", "DECIM", "SEND", "TIME", "FDBK", "MIX", "TONE", "WOBBLE", "FILTER", "FX ON",
-    "SYNC", "MODE", "FREEZE", "WARM", "RATE", "DEPTH", "DIST", "SHAPE", "LFO TO", "COMP", "ALL FX", "" };
+    "SYNC", "MODE", "FREEZE", "WARM", "RATE", "DEPTH", "DIST", "SHAPE", "LFO TO", "COMP", "ALL FX",
+    "MIX", "SIZE", "TONE", "RV SND", "" };
 
 /* The pages: four effects each, KNOB 1..4 in order. */
-#define LSDJ_FX_PAGES 7u
-enum { FX_PAGE_MASTER, FX_PAGE_FILTER, FX_PAGE_DRIVE, FX_PAGE_LFO, FX_PAGE_LOFI, FX_PAGE_ECHO, FX_PAGE_ECHO_MOD };
+#define LSDJ_FX_PAGES 8u
+enum { FX_PAGE_MASTER, FX_PAGE_FILTER, FX_PAGE_DRIVE, FX_PAGE_LFO, FX_PAGE_LOFI, FX_PAGE_ECHO, FX_PAGE_ECHO_MOD, FX_PAGE_REVERB };
+/* 0.9.97: every effect on one page only, the per-channel ones on the channel pages. LO-FI K3 the echo send, K4 the
+   reverb send (dev.7; REVERB K4 was INPUT); ECHO
+   time, feedback, mix, tone; MASTER K3 freeze; the filter type on FILTER K2 (979-996: the send on FILTER K2, the type
+   on LO-FI K3; 980-996 MASTER K3 / K4 the echo mix and time as well; dev.2-5 the send on ECHO K1, the tone on ECHO
+   MOD K4). */
 static const uint8_t lsdj_fx_page_knob[LSDJ_FX_PAGES][4] = {
-    {FXK_ALLON, FXK_COMP, FXK_ECHO_MIX, FXK_ECHO_TIME},   /* FM-1_980: the echo mix and time here too (hold FX) */
-    {FXK_FXON, FXK_SEND, FXK_CUTOFF, FXK_RESO},   /* FM-1_979: the echo send next to FX on/off */
+    {FXK_ALLON, FXK_COMP, FXK_FREEZE, FXK_NONE},
+    {FXK_FXON, FXK_TYPE, FXK_CUTOFF, FXK_RESO},
     {FXK_DRIVE, FXK_DIST, FXK_WARM, FXK_NONE},
     {FXK_LFO_RATE, FXK_LFO_DEPTH, FXK_LFO_SHAPE, FXK_LFO_DEST},
-    {FXK_CRUSH, FXK_DECIM, FXK_TYPE, FXK_NONE},   /* ... and the filter type here (before 979: swapped) */
+    {FXK_CRUSH, FXK_DECIM, FXK_SEND, FXK_RV_SEND},
     {FXK_ECHO_TIME, FXK_ECHO_FB, FXK_ECHO_MIX, FXK_ECHO_TONE},
-    {FXK_ECHO_WOBBLE, FXK_SYNC, FXK_MODE, FXK_FREEZE},
+    {FXK_ECHO_WOBBLE, FXK_SYNC, FXK_MODE, FXK_NONE},
+    {FXK_RV_MIX, FXK_RV_SIZE, FXK_RV_TONE, FXK_NONE},   /* 0.9.97 */
 };
-static const char *const lsdj_fx_page_name[LSDJ_FX_PAGES] = {"MASTER", "FILTER", "DRIVE", "LFO", "LO-FI", "ECHO", "ECHO MOD"};
-static const char lsdj_fx_page_letters[LSDJ_FX_PAGES + 1] = "1234567";   /* matches the page counter */
+static const char *const lsdj_fx_page_name[LSDJ_FX_PAGES] = {"MASTER", "FILTER", "DRIVE", "LFO", "LO-FI", "ECHO", "ECHO MOD", "REVERB"};
+static const char lsdj_fx_page_letters[LSDJ_FX_PAGES + 1] = "12345678";   /* matches the page counter */
 
 #define LSDJ_FX_ALL 4u      /* target: every channel */
 #define LSDJ_FX_CURSOR 5u   /* target: the channel under LSDj's cursor (default) */
@@ -66,20 +80,35 @@ typedef struct {
     uint8_t chpage;          /* the channel page last shown (back to it from the master pages) */
     uint8_t channels;        /* KNOBS = CHANNELS (lsdj_feat.h): K1-K4 = PU1 PU2 WAV NOI, see below */
     uint8_t param;           /* ... the effect on them (0..LSDJ_FX_CHPARAMS-1) */
+    uint8_t seen_ch;         /* the last known cursor channel (0xFF none yet): a change ends a SELECT button pick */
 } lsdj_fx_ui_t;
 
 static void lsdj_fx_ui_init(lsdj_fx_ui_t *u) {
     u->target = LSDJ_FX_CURSOR; u->cursor_ch = 0xFF; u->page = u->chpage = FX_PAGE_FILTER; u->channels = 0; u->param = 0;
+    u->seen_ch = 0xFF;
 }
+/* The SELECT button: the next channel, PU1 > PU2 > WAV > NOI > back to following LSDj's cursor. */
+static void lsdj_fx_pick_next(lsdj_fx_ui_t *u) {
+    u->target = u->target == LSDJ_FX_CURSOR ? 0u : u->target < 3u ? (uint8_t)(u->target + 1u) : LSDJ_FX_CURSOR;
+}
+/* Each frame, LSDj's cursor channel (0..3, else 0xFF unknown). A move to another channel ends a pick;
+   an unknown cursor never does. */
+static void lsdj_fx_cursor_seen(lsdj_fx_ui_t *u, uint8_t c) {
+    u->cursor_ch = c < 4u ? c : 0xFFu;
+    if (c >= 4u) return;
+    if (c != u->seen_ch && u->seen_ch != 0xFFu) u->target = LSDJ_FX_CURSOR;
+    u->seen_ch = c;
+}
+static int lsdj_fx_picked(const lsdj_fx_ui_t *u) { return u->target < 4u; }
 /* The pages in order: the channel pages (the first four), then the master pages (MASTER and
    the shared echo). FM-1_982: two lists, SELECT turns the pages of the one shown (981: one
    list of all seven; 977-980: hold FX for the master pages). */
-#define LSDJ_FX_ORDER 7u
+#define LSDJ_FX_ORDER 8u
 static const uint8_t lsdj_fx_order[LSDJ_FX_ORDER] = {FX_PAGE_FILTER, FX_PAGE_DRIVE, FX_PAGE_LFO, FX_PAGE_LOFI,
-                                                    FX_PAGE_MASTER, FX_PAGE_ECHO, FX_PAGE_ECHO_MOD};
+                                                    FX_PAGE_MASTER, FX_PAGE_ECHO, FX_PAGE_ECHO_MOD, FX_PAGE_REVERB};
 #define LSDJ_FX_CHANNEL_PAGES 4u   /* the first four of them */
-static const char *const lsdj_fx_list_letters[2] = {"1234", "123"};   /* the screen map, per list */
-static int lsdj_fx_is_master(unsigned p) { return p == FX_PAGE_MASTER || p == FX_PAGE_ECHO || p == FX_PAGE_ECHO_MOD; }
+static const char *const lsdj_fx_list_letters[2] = {"1234", "1234"};   /* the screen map, per list */
+static int lsdj_fx_is_master(unsigned p) { return p == FX_PAGE_MASTER || p == FX_PAGE_ECHO || p == FX_PAGE_ECHO_MOD || p == FX_PAGE_REVERB; }
 static unsigned lsdj_fx_index(unsigned p) {   /* its place in the list */
     for (unsigned i = 0; i < LSDJ_FX_ORDER; i++) if (lsdj_fx_order[i] == p) return i;
     return 0;
@@ -93,9 +122,9 @@ static int lsdj_fx_on_master(const lsdj_fx_ui_t *u) { return lsdj_fx_is_master(l
    K3 WAV, K4 NOI. SELECT goes through the per-channel effects in page order (the master
    pages as usual). u->page follows: the page the effect is on (the screen map and the web
    page show it). */
-#define LSDJ_FX_CHPARAMS 14u
-static const uint8_t lsdj_fx_chparam[LSDJ_FX_CHPARAMS] = {FXK_FXON, FXK_SEND, FXK_CUTOFF, FXK_RESO, FXK_DRIVE, FXK_DIST, FXK_WARM,
-    FXK_LFO_RATE, FXK_LFO_DEPTH, FXK_LFO_SHAPE, FXK_LFO_DEST, FXK_CRUSH, FXK_DECIM, FXK_TYPE};
+#define LSDJ_FX_CHPARAMS 15u   /* the channel pages' effects, in page order */
+static const uint8_t lsdj_fx_chparam[LSDJ_FX_CHPARAMS] = {FXK_FXON, FXK_TYPE, FXK_CUTOFF, FXK_RESO, FXK_DRIVE, FXK_DIST, FXK_WARM,
+    FXK_LFO_RATE, FXK_LFO_DEPTH, FXK_LFO_SHAPE, FXK_LFO_DEST, FXK_CRUSH, FXK_DECIM, FXK_SEND, FXK_RV_SEND};
 static int lsdj_fx_chmode(const lsdj_fx_ui_t *u) { return u->channels && !lsdj_fx_on_master(u); }
 /* Its place in its list (0..), and the list's length. */
 static unsigned lsdj_fx_pos(const lsdj_fx_ui_t *u) {
@@ -126,6 +155,9 @@ static unsigned lsdj_fxk_m(unsigned k) {
     static const uint8_t m[] = {FXM_TIME, FXM_FEEDBACK, FXM_MIX, FXM_TONE, FXM_WOBBLE};
     return m[k - FXK_ECHO_TIME];
 }
+/* 0.9.97's reverb (fx->p.r; its sends, per channel, in fx->p.rs) */
+static int lsdj_fxk_is_rv(unsigned k) { return k >= FXK_RV_MIX && k <= FXK_RV_TONE; }
+static unsigned lsdj_fxk_r(unsigned k) { return FXR_MIX + (k - FXK_RV_MIX); }
 /* alpha 66's per-channel effects (fx->p.q) */
 static int lsdj_fxk_is_q(unsigned k) { return k >= FXK_WARM && k <= FXK_LFO_DEST; }
 static unsigned lsdj_fxk_q(unsigned k) {
@@ -133,7 +165,7 @@ static unsigned lsdj_fxk_q(unsigned k) {
     return m[k - FXK_WARM];
 }
 /* Effects that act on the target channel(s). */
-static int lsdj_fxk_per_channel(unsigned k) { return k <= FXK_SEND || k == FXK_TYPE || lsdj_fxk_is_q(k); }
+static int lsdj_fxk_per_channel(unsigned k) { return k <= FXK_SEND || k == FXK_TYPE || lsdj_fxk_is_q(k) || k == FXK_RV_SEND; }
 /* ... and the channel's FX on/off: the pop-up's title names the channel. */
 static int lsdj_fxk_on_channel(unsigned k) { return lsdj_fxk_per_channel(k) || k == FXK_FXON; }
 static unsigned lsdj_fxk_ch_param(unsigned k) {
@@ -151,6 +183,8 @@ static unsigned lsdj_fx_shown_ch(const lsdj_fx_ui_t *u) { unsigned t = lsdj_fx_e
 static unsigned lsdj_fxk_get(const lsdj_fx_t *fx, const lsdj_fx_ui_t *u, unsigned k) {
     if (k == FXK_NONE) return 0;
     if (lsdj_fxk_is_echo(k)) return fx->p.m[lsdj_fxk_m(k)];
+    if (lsdj_fxk_is_rv(k)) return fx->p.r[lsdj_fxk_r(k)];
+    if (k == FXK_RV_SEND) return fx->p.rs[lsdj_fx_shown_ch(u)];
     if (lsdj_fxk_is_q(k)) return fx->p.q[lsdj_fx_shown_ch(u)][lsdj_fxk_q(k)];
     if (lsdj_fxk_per_channel(k)) return fx->p.ch[lsdj_fx_shown_ch(u)][lsdj_fxk_ch_param(k)];
     switch (k) {
@@ -239,8 +273,8 @@ static void lsdj_fxk_value_short(const lsdj_fx_t *fx, const lsdj_fx_ui_t *u, uns
 
 /* Change k by `steps` knob clicks on the target. 0..127 values move 2 per click;
    choices one per click (a synced echo time: one note). Turning a cutoff or
-   resonance with no filter switches on low-pass; an echo send with the echo
-   silent sets a mix. */
+   resonance with no filter switches on low-pass; an echo or reverb send with
+   it silent sets a mix. */
 #define LSDJ_FX_KNOB_STEP 2
 static void lsdj_fxk_turn(lsdj_fx_t *fx, lsdj_fx_ui_t *u, unsigned k, int steps) {
     if (!steps || k == FXK_NONE) return;
@@ -252,6 +286,14 @@ static void lsdj_fxk_turn(lsdj_fx_t *fx, lsdj_fx_ui_t *u, unsigned k, int steps)
         fx->p.m[FXM_TIME] = (uint8_t)lsdj_fx_time_of((unsigned)note);
     } else if (lsdj_fxk_is_echo(k)) {
         uint8_t *v = &fx->p.m[lsdj_fxk_m(k)];
+        *v = (uint8_t)lsdj_fx_clamp127(*v + steps * LSDJ_FX_KNOB_STEP);
+    } else if (k == FXK_RV_SEND) {
+        unsigned t = lsdj_fx_eff(u);
+        for (unsigned c = 0; c < 4; c++)
+            if (t == LSDJ_FX_ALL || t == c) fx->p.rs[c] = (uint8_t)lsdj_fx_clamp127(fx->p.rs[c] + steps * LSDJ_FX_KNOB_STEP);
+        if (steps > 0 && !fx->p.r[FXR_MIX]) fx->p.r[FXR_MIX] = 64;
+    } else if (lsdj_fxk_is_rv(k)) {
+        uint8_t *v = &fx->p.r[lsdj_fxk_r(k)];
         *v = (uint8_t)lsdj_fx_clamp127(*v + steps * LSDJ_FX_KNOB_STEP);
     } else if (k == FXK_COMP) {
         fx->p.comp = (uint8_t)lsdj_fx_clamp127(fx->p.comp + steps * LSDJ_FX_KNOB_STEP);
@@ -392,7 +434,7 @@ static void lsdj_fx_bars(const lsdj_fx_t *fx, const lsdj_fx_ui_t *u, int hot, ch
    The master pages show PU1 PU2 WAV NOI under the bars (lit: playing), the same
    mute as the web page's channel buttons and MIDI CC 81. C4 D4 E4 F4 (key bits,
    F3 = bit 0) toggle them; their lights are lit while the channel plays. Channel FX
-   on/off is FILTER K1, freeze is ECHO MOD K4. */
+   on/off is FILTER K1, freeze is MASTER K3 (0.9.97; ECHO MOD K4 before). */
 static const uint8_t lsdj_fx_mute_key[4] = {7, 9, 11, 12};
 /* Keys pressed this frame on a master page; 1 if a mute changed. */
 static int lsdj_fx_hold_keys(lsdj_fx_t *fx, uint32_t down) {
@@ -408,30 +450,39 @@ static uint32_t lsdj_fx_hold_lights(const lsdj_fx_t *fx) {
     return l;
 }
 
-/* ---------- saving: 17 words (mutes and freeze are not kept) ----------
+/* ---------- saving: 19 words (mutes and freeze are not kept) ----------
    Words 0..10 as before alpha 66 (byte 43: the compressor), words 11..16 the per-channel
-   alpha 66 effects (4 x 6 bytes). Older firmware reads the first 11 and ignores the rest. */
-#define LSDJ_FX_WORDS 17u
+   alpha 66 effects (4 x 6 bytes), word 17 the reverb (0.9.97: mix, size, tone; byte 3 was INPUT before dev.7),
+   word 18 the reverb sends (dev.7: a byte per channel). Older firmware reads the first 18, 17 or 11 and ignores
+   the rest. The web link carries the first 17 (LSDJ_FX_WORDS_LINK): a page that sets them keeps the reverb. */
+#define LSDJ_FX_WORDS 19u
+#define LSDJ_FX_WORDS_RV 18u   /* 0.9.97-dev.1-6: the reverb with INPUT, no sends */
+#define LSDJ_FX_WORDS_LINK 17u
 #define LSDJ_FX_WORDS_OLD 11u
 #define LSDJ_FX_MARK 0xF2u
 static void lsdj_fx_pack(const lsdj_fx_t *fx, const lsdj_fx_ui_t *u, uint32_t w[LSDJ_FX_WORDS]) {
-    uint8_t b[68] = {0};
+    uint8_t b[76] = {0};
     for (unsigned c = 0; c < 4; c++) for (unsigned p = 0; p < FXP_CH_COUNT; p++) b[c * FXP_CH_COUNT + p] = fx->p.ch[c][p];
     for (unsigned m = 0; m < FXM_COUNT; m++) b[28 + m] = fx->p.m[m];
-    b[35] = fx->p.fx_off; b[36] = u->target; b[37] = 2; b[38] = u->page;   /* layout 2: MASTER first */
+    /* layout 2: MASTER first. REVERB is saved as MASTER (both open on FILTER): firmware before 0.9.97 would
+       refuse a page it does not have, and with it the whole setup */
+    b[35] = fx->p.fx_off; b[36] = u->target; b[37] = 2; b[38] = u->page == FX_PAGE_REVERB ? FX_PAGE_MASTER : u->page;
     b[39] = fx->p.bypass;
     b[42] = LSDJ_FX_MARK; b[43] = fx->p.comp;
     for (unsigned c = 0; c < 4; c++) for (unsigned q = 0; q < FXQ_COUNT; q++) b[44 + c * FXQ_COUNT + q] = fx->p.q[c][q];
+    for (unsigned r = 0; r < FXR_COUNT; r++) b[68 + r] = fx->p.r[r];
+    for (unsigned c = 0; c < 4; c++) b[72 + c] = fx->p.rs[c];
     for (unsigned i = 0; i < LSDJ_FX_WORDS; i++)
         w[i] = (uint32_t)b[i * 4] | (uint32_t)b[i * 4 + 1] << 8 | (uint32_t)b[i * 4 + 2] << 16 | (uint32_t)b[i * 4 + 3] << 24;
 }
 /* 0 if the words are not a saved effects setup (defaults kept). Also reads the
    10-word setup of alphas 27-29 (mark 0xF1 in byte 37; w[10] unused) and the
    knob assignments of alphas 30-33 (byte 38 was knob 1's effect: page 0). */
-/* n: 17 words, or 11 (before alpha 66: the new effects stay off). */
+/* n: 19 words, 18 (0.9.97-dev.1-6: no sends, made from INPUT), 17 (before 0.9.97: the reverb off, its defaults)
+   or 11 (before alpha 66: the new effects stay off). */
 static int lsdj_fx_unpack_n(lsdj_fx_t *fx, lsdj_fx_ui_t *u, const uint32_t *w, unsigned n) {
-    uint8_t b[68] = {0};
-    if (n != LSDJ_FX_WORDS && n != LSDJ_FX_WORDS_OLD) return 0;
+    uint8_t b[76] = {0};
+    if (n != LSDJ_FX_WORDS && n != LSDJ_FX_WORDS_RV && n != LSDJ_FX_WORDS_LINK && n != LSDJ_FX_WORDS_OLD) return 0;
     for (unsigned i = 0; i < n; i++) for (unsigned j = 0; j < 4; j++) b[i * 4 + j] = (uint8_t)(w[i] >> (8 * j));
     for (unsigned i = 0; i < 28; i++) if (b[i] > 127 || (i % FXP_CH_COUNT == FXP_TYPE && b[i] >= LSDJ_FX_FILTERS)) return 0;
     uint8_t comp = 0;
@@ -450,7 +501,7 @@ static int lsdj_fx_unpack_n(lsdj_fx_t *fx, lsdj_fx_ui_t *u, const uint32_t *w, u
         for (unsigned i = 0; i < FXM_COUNT; i++) m[i] = b[28 + i];
         off = b[35]; target = b[36];
         if (b[37] == 2) {
-            if (n != LSDJ_FX_WORDS || b[38] >= LSDJ_FX_PAGES || b[39] > 1 || b[40] || b[41]) return 0;
+            if (n == LSDJ_FX_WORDS_OLD || b[38] >= LSDJ_FX_PAGES || b[39] > 1 || b[40] || b[41]) return 0;
             page = b[38]; bypass = b[39];
         } else if (b[37] > 1) return 0;
         else if (b[39] == 0 && b[40] == 0 && b[41] == 0) {
@@ -460,10 +511,22 @@ static int lsdj_fx_unpack_n(lsdj_fx_t *fx, lsdj_fx_ui_t *u, const uint32_t *w, u
     } else return 0;
     for (unsigned i = 0; i < FXM_COUNT; i++) if (m[i] > 127) return 0;
     if (m[FXM_SYNC] > 1 || m[FXM_MODE] > 1 || off > 15 || target > 5) return 0;
+    uint8_t r[FXR_COUNT] = {0, LSDJ_FX_RV_SIZE0, LSDJ_FX_RV_TONE0}, rs[4] = {0};
+    if (n >= LSDJ_FX_WORDS_RV) {
+        for (unsigned i = 0; i < FXR_COUNT; i++) r[i] = b[68 + i];
+        if (r[FXR_MIX] > 127 || r[FXR_SIZE] > 127 || r[FXR_TONE] > 127 || b[71] > 1) return 0;
+    }
+    if (n == LSDJ_FX_WORDS) {
+        for (unsigned c = 0; c < 4; c++) { rs[c] = b[72 + c]; if (rs[c] > 127) return 0; }
+    } else if (n == LSDJ_FX_WORDS_RV && r[FXR_MIX]) {   /* dev.1-6: INPUT SEND fed it the echo sends, ALL everything */
+        for (unsigned c = 0; c < 4; c++) rs[c] = b[71] ? b[c * FXP_CH_COUNT + FXP_SEND] : 127u;
+    }
     for (unsigned c = 0; c < 4; c++) for (unsigned p = 0; p < FXP_CH_COUNT; p++) fx->p.ch[c][p] = b[c * FXP_CH_COUNT + p];
     for (unsigned i = 0; i < FXM_COUNT; i++) fx->p.m[i] = m[i];
     for (unsigned c = 0; c < 4; c++) for (unsigned q = 0; q < FXQ_COUNT; q++) fx->p.q[c][q] = b[44 + c * FXQ_COUNT + q];
     fx->p.comp = comp;
+    for (unsigned i = 0; i < FXR_COUNT; i++) fx->p.r[i] = r[i];
+    for (unsigned c = 0; c < 4; c++) fx->p.rs[c] = rs[c];
     fx->p.bypass = bypass;
     (void)target;   /* the effects always follow LSDj's cursor now (a saved lock was easy to set by accident) */
     if (lsdj_fx_is_master(page)) page = FX_PAGE_FILTER;   /* opens on FILTER */
@@ -473,6 +536,29 @@ static int lsdj_fx_unpack_n(lsdj_fx_t *fx, lsdj_fx_ui_t *u, const uint32_t *w, u
 }
 static int lsdj_fx_unpack(lsdj_fx_t *fx, lsdj_fx_ui_t *u, const uint32_t w[LSDJ_FX_WORDS]) { return lsdj_fx_unpack_n(fx, u, w, LSDJ_FX_WORDS); }
 
+/* The reverb word alone (word 17: mix, size, tone), for the web link's REVERB_GET / REVERB_SET (0.9.97; the 4th
+   byte, INPUT before dev.7, is 0 and ignored if 1). */
+static uint32_t lsdj_fx_rv_word(const lsdj_fx_t *fx) {
+    return (uint32_t)fx->p.r[FXR_MIX] | (uint32_t)fx->p.r[FXR_SIZE] << 8 | (uint32_t)fx->p.r[FXR_TONE] << 16;
+}
+/* 0 if w is not a reverb word (nothing changed). */
+static int lsdj_fx_rv_set(lsdj_fx_t *fx, uint32_t w) {
+    uint8_t r[FXR_COUNT] = {(uint8_t)w, (uint8_t)(w >> 8), (uint8_t)(w >> 16)};
+    if (r[FXR_MIX] > 127 || r[FXR_SIZE] > 127 || r[FXR_TONE] > 127 || (w >> 24) > 1u) return 0;
+    for (unsigned i = 0; i < FXR_COUNT; i++) fx->p.r[i] = r[i];
+    lsdj_fx_update(fx);
+    return 1;
+}
+/* The reverb sends (word 18: a byte per channel, PU1 low), for REVERB_SENDS_GET / _SET (0.9.97-dev.7). */
+static uint32_t lsdj_fx_rvs_word(const lsdj_fx_t *fx) {
+    return (uint32_t)fx->p.rs[0] | (uint32_t)fx->p.rs[1] << 8 | (uint32_t)fx->p.rs[2] << 16 | (uint32_t)fx->p.rs[3] << 24;
+}
+static int lsdj_fx_rvs_set(lsdj_fx_t *fx, uint32_t w) {
+    for (unsigned c = 0; c < 4; c++) if (((w >> (8 * c)) & 255u) > 127u) return 0;
+    for (unsigned c = 0; c < 4; c++) fx->p.rs[c] = (uint8_t)(w >> (8 * c));
+    lsdj_fx_update(fx);
+    return 1;
+}
 /* Older live clients cannot change effects they do not expose. Saved setups
    use unpack_n directly, with the legacy defaults instead. */
 static int lsdj_fx_set_words(lsdj_fx_t *fx, lsdj_fx_ui_t *u, const uint32_t *w, unsigned n) {
@@ -482,6 +568,7 @@ static int lsdj_fx_set_words(lsdj_fx_t *fx, lsdj_fx_ui_t *u, const uint32_t *w, 
         memcpy(fx->p.q, before.q, sizeof before.q);
         fx->p.comp = before.comp;
     }
+    if (n < LSDJ_FX_WORDS) { memcpy(fx->p.r, before.r, sizeof before.r); memcpy(fx->p.rs, before.rs, sizeof before.rs); }   /* (the web page: 17 words) */
     if (((w[9] >> 8) & 255u) != 2) fx->p.bypass = before.bypass;
     lsdj_fx_update(fx);
     return 1;

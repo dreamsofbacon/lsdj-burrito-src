@@ -1,11 +1,11 @@
 # Dreamy_bacon's LSDJ Burrito
 
-LSDJ Burrito runs [Little Sound Dj](https://www.littlesounddj.com) on the M-VAVE FM-1, played from the FM-1's own keys and knobs, with songs saved to the FM-1's flash. It adds per-channel effects (filters including notch and 24 dB low-pass, drive with soft / hard / fold / fuzz, warmth, lo-fi, an LFO to cutoff, volume or pan), a master echo and compressor, MIDI clock in and out, MIDI notes and CCs, themes, and experimental Bluetooth MIDI.
+LSDJ Burrito runs [Little Sound Dj](https://www.littlesounddj.com) on the M-VAVE FM-1, played from the FM-1's own keys and knobs, with songs saved to the FM-1's flash. It adds per-channel effects (filters including notch and 24 dB low-pass, drive with soft / hard / fold / fuzz, warmth, lo-fi, an LFO to cutoff, volume or pan), a master echo, reverb and compressor, MIDI clock in and out, MIDI notes and CCs, and themes. The web page adds live control, a game controller, song and kit tools, and a virtual FM-1.
 
 ![The web page's Perform view: the FM-1 (here the virtual FM-1 running LSDj), the master effects, the four channel pages at once, and the wiring of every effect](docs/perform.png)
 
-- **Web page:** [dreamsofbacon.github.io/lsdj-burrito](https://dreamsofbacon.github.io/lsdj-burrito/): install or update LSDJ Burrito step by step with your own `lsdj.gb` (LSDj is not included, and your ROM never leaves your computer), then control effects, songs, colours and settings over USB (or Bluetooth).
-- **Status:** 0.9.96, alpha (package identity FM-1_537000996). Releases: the [GitHub releases](https://github.com/dreamsofbacon/lsdj-burrito-src/releases) carry the firmware file, with no LSDj in it: on an FM-1 it asks you to add your own with the web page. Installing from the web page with your own LSDj is experimental; LSDj 9.3.9 is the verified version.
+- **Web page:** [dreamsofbacon.github.io/lsdj-burrito](https://dreamsofbacon.github.io/lsdj-burrito/): install or update LSDJ Burrito step by step with your own `lsdj.gb` (LSDj is not included, and your ROM never leaves your computer), then control effects, songs, colours and settings over USB.
+- **Status:** 0.9.97, alpha (package identity FM-1_537000997). Releases: the [GitHub releases](https://github.com/dreamsofbacon/lsdj-burrito-src/releases) carry the firmware file, with no LSDj in it: on an FM-1 it asks you to add your own with the web page. Installing from the web page with your own LSDj is experimental; LSDj 9.3.9 is the verified version.
 - **Based on** [GameDude](https://github.com/ChanceTheMaker/gamedude-fm1-smk) by ChanceTheMaker (GPL-3.0). No Bluetooth (removed in FM-1_994, with GameDude's game library loader and website). The firmware README follows below.
 
 Not affiliated with M-VAVE, Johan Kotlinski (LSDj) or Nintendo.
@@ -13,6 +13,25 @@ Not affiliated with M-VAVE, Johan Kotlinski (LSDj) or Nintendo.
 ---
 
 # LSDJ Burrito firmware (based on GameDude)
+
+## LSDJ Burrito 0.9.97: a master reverb, effects on one page each, and a game controller
+
+- **A master reverb**: FX > REVERB with MIX, SIZE (about 0.4 to 6 s) and TONE. Each channel feeds it with
+  RV SND (LO-FI KNOB 4). MIDI CC 92 is a channel's reverb send; CCs 21, 22 and 23 are the reverb's mix, size
+  and tone. The web page has it too (Perform > Master, and per channel).
+- **Every effect setting is on one page only**: the echo SEND is on LO-FI KNOB 3 (it was FILTER KNOB 2), the
+  filter type on FILTER KNOB 2 (it was LO-FI KNOB 3), FREEZE on MASTER KNOB 3; MASTER no longer has the echo's
+  mix and time (they are on ECHO).
+- **The SELECT button picks the effects channel** on any LSDj screen: PU1 > PU2 > WAV > NOI > follow the
+  cursor. It is lit while a channel is picked.
+- **MIDI clock with SYNC on KEYBD** (LSDj 9.3.9): a MIDI Start sets LSDj's SYNC to MIDI, and Stop sets KEYBD
+  again, so note mode and MIDI clock work without changing the setting by hand.
+- **The FM-1's screen shows an install's progress**: a bar, the status and DO NOT UNPLUG.
+- **A game controller** plays LSDj through the web page (link op PAD_SET; Settings > Game controller there).
+- **The newer FM-1 memory chip** (UC25HQ80): on those units 0.9.96 said SAVE FAILED and updates failed.
+- **Back to M-VAVE's V16** with M-UPGRADE also works on FM-1s that had M-VAVE's V15.
+- The firmware is smaller (board.c built with -Oz), so the LSDj slot holds more: 502016 bytes.
+- The splash shows VERSION 0.9.97 (identity FM-1_537000997, short name FM-1_997).
 
 ## LSDJ Burrito 0.9.96: release numbering, and a firmware file without LSDj
 

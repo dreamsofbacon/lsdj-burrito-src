@@ -306,6 +306,7 @@ typedef char lst_pool_inside_flash_range[FL_RANGE_OK(LST_POOL_LO,LST_POOL_HI-LST
 #define SEQ_BUTTON 11u            /* BTN_SEQ: LSDj live / song mode, any screen */
 #define ARP_BUTTON 10u            /* BTN_ARP: song row cue (hold, K1/K2 row, let go) */
 #define EDIT_BUTTON 6u            /* BTN_EDIT: tempo (hold + K1/K2, or tap) */
+#define CHAN_BUTTON 3u            /* the SELECT button (printed SELECT; not the SELECT knob): the effects channel, any LSDj screen */
 #define LSDJ_STATE_BUILD 1u       /* cartridge-RAM-only compressed autosave (v6..v10, imported) */
 #define SILENT_FRAMES 30u            /* 0.5 s of exactly-zero output: LSDj is stopped */
 static ftl_t ftl;
@@ -339,10 +340,11 @@ static uint32_t menu_hint_until;
 static lsdj_fx_t fx;
 static lsdj_fx_ui_t fxu;
 static uint8_t fx_echo[LSDJ_FX_ECHO_LEN] __attribute__((section(".pool"),aligned(4)));
+static int16_t fx_reverb[LSDJ_FX_RV_LEN] __attribute__((aligned(4)));   /* the master reverb (0.9.97), 6.6 KB: in RAM (.bss), the pool has 3 KB left */
 static void fx_hook(const int16_t *s,int32_t *l,int32_t *r){lsdj_fx_mix(&fx,s,l,r);}   /* audio interrupt */
 /* Two areas (FM-1_984). The channel effects: turning KNOB 1-4 or SELECT pops up the channel pages
    (FILTER .. LO-FI) for the channel under LSDj's cursor, for a moment, as before; LSDj keeps its input.
-   The master effects: only the FX button, which opens the master pages (MASTER, ECHO, ECHO MOD: the
+   The master effects: only the FX button, which opens the master pages (MASTER, ECHO, ECHO MOD, REVERB: the
    channel strip, C4-F4 mute, lsdj_fx_hold_keys) and keeps them open until FX again. */
 static uint8_t fx_open;
 static uint32_t fx_keys_prev;
@@ -407,6 +409,19 @@ static int keybd_sync(void){
     return 1;
 }
 static void keybd_sync_note(void){if(keybd_sync()==1)lsdj_ov_say(&ov,LSDJ_MSG_KEYBD_SET,fm1_ms);}
+/* Auto SYNC (0.9.97): with SYNC on KEYBD (or OFF), a MIDI Start / Continue sets it to MIDI for the
+   clock, and Stop sets KEYBD again once LSDj has stopped, so note mode and NOTE IN work between
+   runs. LSDj 9.3.9 (harness/sync_switch.sh): the song's SYNC byte, LSDj's working copy and the
+   keyboard flag after the interrupt bits (1 for KEYBD; it must be 0 for MIDI, or LSDj runs on its
+   own clock). The interrupt bits are the same for both. SYNC = LSDJ (clock out) is left alone. */
+static uint8_t sync_auto;   /* SYNC is MIDI because of a MIDI Start: KEYBD again after Stop */
+static int sync_set(uint8_t s){
+    if(!sync_off||!synclive_addr||!syncmask_addr)return 0;
+    const uint16_t a[2]={synclive_addr,(uint16_t)(syncmask_addr+1u)};
+    const uint8_t v[2]={s,(uint8_t)(s==LSDJ_SYNC_KEYBD)};
+    if(!gp_wram_poke_many(a,v,2u))return 0;
+    gp_save_data()[sync_off]=s;return 1;
+}
 /* MIDI clock sync (firmware/lsdj_midisync.h): USB MIDI clock and transport. */
 #include "lsdj_midisync.h"
 static lsdj_ms_t msync;
@@ -456,7 +471,7 @@ static void midi_in(uint32_t pkt,uint32_t at_ms,uint32_t src){
     case LSDJ_MIDI_CLOCK:case LSDJ_MIDI_TRANSPORT:break;   /* below */
     case LSDJ_MIDI_NOTE:
         keybd_sync_note();
-        if(sync_off&&gp_save_data()[sync_off]!=LSDJ_SYNC_KEYBD&&!midi_note_told){
+        if(sync_off&&gp_save_data()[sync_off]!=LSDJ_SYNC_KEYBD&&!midi_note_told&&!sync_auto){
             midi_note_told=1;lsdj_ov_show(&ov,"MIDI NOTES: SET","LSDJ SYNC TO KEYBD",fm1_ms);
         }
         lsdj_keybd_note(d1,1);return;
@@ -470,11 +485,18 @@ static void midi_in(uint32_t pkt,uint32_t at_ms,uint32_t src){
     }
     uint32_t age=fm1_ms-at_ms;if(age>50u)age=50u;   /* waited in the ring (ms) */
     tick_target=sound_clock()-age*441u/10u+lsdj_midi_delay_samples(&midi);
+    if((st==0xFAu||st==0xFBu)&&sync_off){   /* auto SYNC: KEYBD (or OFF) -> MIDI */
+        uint8_t s=gp_save_data()[sync_off];
+        if(s==0u&&keybd_sync()==1)s=LSDJ_SYNC_KEYBD;   /* (OFF: KEYBD's interrupt bits first) */
+        if(s==LSDJ_SYNC_KEYBD&&sync_set(LSDJ_SYNC_MIDI))sync_auto=1;
+    }
     sync_midi=(uint8_t)(sync_off&&gp_save_data()[sync_off]==LSDJ_SYNC_MIDI);
     int said=lsdj_ms_byte(&msync,st,sync_midi,lsdj_armed(),sync_link_send);
     static const char *const msg[5][2]={{0,0},{"MIDI START",""},{"MIDI CONTINUE",""},{"MIDI STOP",""},
                                         {"MIDI START: SET","LSDJ SYNC TO MIDI"}};
-    if(said)lsdj_ov_show(&ov,msg[said][0],msg[said][1],fm1_ms);
+    const char *l2=msg[said][1];
+    if(sync_auto&&said!=LSDJ_MS_SAID_SET_SYNC)l2=said==LSDJ_MS_SAID_STOP?"LSDJ SYNC: KEYBD":"LSDJ SYNC: MIDI";
+    if(said)lsdj_ov_show(&ov,msg[said][0],l2,fm1_ms);
 }
 /* The effects pop-up: the page's four knobs as bars under LSDj's four channel
    columns (lsdj_overlay.h). hot = the knob just turned (amber), -1 none. While
@@ -511,8 +533,9 @@ static void fx_bars_show(int hot){
 }
 /* The effects setup into the save store (records 1..11), only what changed.
    The flash must be safe (emulator parked or stopped). Records written, or -1. */
-/* the record of effects word i: words 0..10 in records 1..11, words 11..16 (alpha 66) in 17..22 */
-#define FX_REC(i) ((i)<LSDJ_FX_WORDS_OLD?(i)+1u:(i)+6u)
+/* the record of effects word i: words 0..10 in records 1..11, words 11..16 (alpha 66) in 17..22, word 17 (the
+   reverb, 0.9.97) in 24 (23 is the feature switches), word 18 (the reverb sends, 0.9.97-dev.7) in 25 */
+#define FX_REC(i) ((i)<LSDJ_FX_WORDS_OLD?(i)+1u:(i)<LSDJ_FX_WORDS_LINK?(i)+6u:(i)+7u)
 static int fx_store(void){
     uint32_t w[LSDJ_FX_WORDS];lsdj_fx_pack(&fx,&fxu,w);int n=0;
     for(unsigned i=0;i<LSDJ_FX_WORDS;i++){
@@ -529,6 +552,8 @@ static void fx_load(void){
         unsigned r=FX_REC(i);
         if((ftl.rec_has>>r)&1u)w[i]=ftl.rec[r];
         else if(i==10u)w[i]=0;   /* alphas 27-29 kept 10 words */
+        else if(i>=LSDJ_FX_WORDS_RV){n=LSDJ_FX_WORDS_RV;break;}   /* saved by 0.9.97-dev.1-6: sends from INPUT */
+        else if(i>=LSDJ_FX_WORDS_LINK){n=LSDJ_FX_WORDS_LINK;break;}   /* saved before 0.9.97: the reverb off */
         else if(i>=LSDJ_FX_WORDS_OLD){n=LSDJ_FX_WORDS_OLD;break;}   /* saved before alpha 66: the new effects off */
         else return;
     }
@@ -720,7 +745,7 @@ static void lsdj_save_boot(void){
 /* PLAY's light on the beat (firmware/lsdj_lights.h): song mode flashes, live mode dips. */
 #include "lsdj_lights.h"
 /* Button lights as last written (-1 unknown): reset after the boot sweep. */
-static int play_shown=-1,seq_shown=-1,arp_shown=-1;
+static int play_shown=-1,seq_shown=-1,arp_shown=-1,chan_shown=-1;
 static void play_light(void){
     int on=1;
     if(armed_addr&&row_addr){
@@ -732,6 +757,8 @@ static void play_light(void){
     if(!led_anim&&on!=play_shown){play_shown=on;fm1_led_key(LSDJ_BTN_PLAY,on);}
     int live=live_addr&&gp_wram_peek(live_addr);   /* SEQ lit in live mode */
     if(!led_anim&&live!=seq_shown){seq_shown=live;fm1_led_key(SEQ_BUTTON,live);}
+    int picked=lsdj_fx_picked(&fxu);   /* the SELECT button lit while it picks the effects channel */
+    if(!led_anim&&picked!=chan_shown){chan_shown=picked;fm1_led_key(CHAN_BUTTON,picked);}
 }
 /* ARP: song row cue (firmware/lsdj_cue.h). */
 #include "lsdj_cue.h"
@@ -847,7 +874,7 @@ static void native_draw(void){
 static int leds_busy(void){
     static int was;
     int on=fm1_led_anim_on();
-    if(was&&!on){lights_valid=0;lights_held_prev=UINT32_MAX;play_shown=seq_shown=arp_shown=-1;fm1_led_key(LSDJ_BTN_REC,1);}
+    if(was&&!on){lights_valid=0;lights_held_prev=UINT32_MAX;play_shown=seq_shown=arp_shown=chan_shown=-1;fm1_led_key(LSDJ_BTN_REC,1);}
     was=on;
     return on;
 }
@@ -882,12 +909,14 @@ static int lk_settings_set(uint32_t v){
     lsdj_settings_t t;if(!lsdj_set_unpack(v,&t))return 0;
     settings=t;settings_apply();return 1;
 }
-static void lk_fx_get(uint32_t w[LSDJ_LINK_FX_WORDS]){lsdj_fx_pack(&fx,&fxu,w);}
+static void lk_fx_get(uint32_t w[LSDJ_LINK_FX_WORDS]){   /* the first 17 words (the reverb is not on the web page yet) */
+    uint32_t a[LSDJ_FX_WORDS];lsdj_fx_pack(&fx,&fxu,a);for(unsigned i=0;i<LSDJ_LINK_FX_WORDS;i++)w[i]=a[i];
+}
 /* Older clients retain effects they cannot expose; saved page numbers migrate. */
 static int lk_fx_set(const uint32_t *w,unsigned n){
     return lsdj_fx_set_words(&fx,&fxu,w,n);
 }
-typedef char lk_fx_words_ok[LSDJ_LINK_FX_WORDS==LSDJ_FX_WORDS&&LSDJ_LINK_FX_WORDS_OLD==LSDJ_FX_WORDS_OLD?1:-1];
+typedef char lk_fx_words_ok[LSDJ_LINK_FX_WORDS==LSDJ_FX_WORDS_LINK&&LSDJ_LINK_FX_WORDS_OLD==LSDJ_FX_WORDS_OLD?1:-1];
 static void lk_theme_get(uint16_t c[8]){lsdj_theme_to8(&lsdj_theme_custom,c);}
 static void lk_theme_set(const uint16_t c[8]){lsdj_theme_from8(&lsdj_theme_custom,c);if(settings.theme==LSDJ_THEME_CUSTOM)settings_apply();}
 static int theme_store(void){   /* the custom theme: records 12..15, only what changed */
@@ -912,7 +941,7 @@ static int lk_store_config(void){
     return rc?-1:0;
 }
 static void lk_live(lsdj_link_live_t *l){
-    l->page=(uint8_t)lsdj_fx_cur(&fxu);l->cursor_ch=fxu.cursor_ch;l->bpm=fx.bpm;l->mute=fx.mute;l->freeze=fx.freeze;l->playing=0;
+    l->page=(uint8_t)lsdj_fx_cur(&fxu);{unsigned t=lsdj_fx_eff(&fxu);l->cursor_ch=t<4u?(uint8_t)t:0xFFu;}   /* the effects' channel (SELECT button pick or cursor) */l->bpm=fx.bpm;l->mute=fx.mute;l->freeze=fx.freeze;l->playing=0;
     l->battery=(uint8_t)battery_level();
     if(armed_addr)for(unsigned c=0;c<4;c++)if(gp_wram_peek((uint16_t)(armed_addr+c)))l->playing|=(uint8_t)(1u<<c);
 }
@@ -932,6 +961,14 @@ static int lk_mute_set(uint8_t m,uint8_t f){   /* the web page's channel buttons
     uint8_t before=fx.mute;fx.mute=m;fx.freeze=f;mute_mark(before,2);lsdj_fx_update(&fx);return 1;
 }
 static uint32_t lk_feat_get(void){return lsdj_feat_pack(&feat);}
+static uint32_t lk_rv_get(void){return lsdj_fx_rv_word(&fx);}
+/* 0.9.97: a game controller on the web page (PAD_SET): its buttons until LSDJ_LINK_PAD_MS after the last message */
+static uint8_t link_pad;static uint32_t link_pad_ms;
+static void lk_pad_set(uint8_t b){link_pad=b;link_pad_ms=fm1_ms;}
+static uint32_t link_pad_now(void){return link_pad&&fm1_ms-link_pad_ms<LSDJ_LINK_PAD_MS?link_pad:0u;}
+static int lk_rv_set(uint32_t v){return lsdj_fx_rv_set(&fx,v);}
+static uint32_t lk_rvs_get(void){return lsdj_fx_rvs_word(&fx);}
+static int lk_rvs_set(uint32_t v){return lsdj_fx_rvs_set(&fx,v);}
 static int lk_feat_set(uint32_t v){lsdj_feat_t t;if(!lsdj_feat_unpack(v,&t))return 0;feat=t;feat_apply();return 1;}
 /* The screen mirror: the LCD image as last shown (lsdj_link_px reads the 160x144 picture back
    from it). FM-1_987: not gp_pixels(), which CPU1 draws the next frame into as soon as the
@@ -978,7 +1015,8 @@ static void screen_push(void){
 }
 static const lsdj_link_io_t link_io={lk_save,lk_size,lk_pause,lk_store,lk_load,lk_reset,lk_firmware,lk_title,lk_live_known,
     lk_settings_get,lk_settings_set,lk_fx_get,lk_fx_set,lk_theme_get,lk_theme_set,lk_store_config,lk_live,
-    lk_midi_get,lk_midi_set,lk_cartridge,lk_mute_set,lk_feat_get,lk_feat_set,lk_screen,lk_screen_stream};
+    lk_midi_get,lk_midi_set,lk_cartridge,lk_mute_set,lk_feat_get,lk_feat_set,lk_screen,lk_screen_stream,lk_rv_get,lk_rv_set,
+    lk_pad_set,lk_rvs_get,lk_rvs_set};
 static int app_sysex_frame(const uint8_t *frame,uint32_t size){
     if(lsdj_absent||!lsdj_link_match(frame,size))return 0;
     ota_wire_send(link_reply,lsdj_link_handle(&link_state,&link_io,frame,size,fm1_ms,link_reply));
@@ -1029,12 +1067,16 @@ static void fm1_input_frame(void){
     /* MIDI sync: START presses for the transport (lsdj_midisync.h), whatever is open */
     sync_midi=(uint8_t)(sync_off&&gp_save_data()[sync_off]==LSDJ_SYNC_MIDI);
     sync_btn=lsdj_ms_frame(&msync,lsdj_armed())?GP_START:0u;
+    if(sync_auto){   /* auto SYNC: back to KEYBD once a MIDI Stop has stopped LSDj */
+        if(!sync_midi)sync_auto=0;   /* SYNC changed by hand, or another song */
+        else if(!msync.running&&msync.want==LSDJ_MS_NONE&&!lsdj_armed()&&sync_set(LSDJ_SYNC_KEYBD)){sync_auto=0;kb_octave=-1;}
+    }
     if(menu.open){menu_input();return;}
     /* Once per emulated frame: knob taps are timed in frames.
        Keys, PLAY=Start, REC=Select: src/fm1_lsdj_input.h. */
     int32_t enc[FM1_NENC];
     for(unsigned e=0;e<FM1_NENC;e++)enc[e]=fm1_enc_take(e);
-    if(cursor_addr){uint8_t c=gp_wram_peek(cursor_addr);fxu.cursor_ch=c<4u?c:0xFFu;}
+    if(cursor_addr)lsdj_fx_cursor_seen(&fxu,gp_wram_peek(cursor_addr));   /* a move ends a SELECT button pick */
     if(tempo_addr){uint8_t b=gp_wram_peek(tempo_addr);lsdj_fx_set_bpm(&fx,b<40u?b+256u:b);}   /* LSDj: 40..295 */
     if(tempo.held){   /* EDIT held: K1 / K2 set the tempo, not effects */
         unsigned b=lsdj_tempo_turn(&tempo,(int)enc[2],(int)enc[3]);enc[2]=enc[3]=enc[4]=enc[5]=0;
@@ -1083,9 +1125,10 @@ static void fm1_input_frame(void){
         lsdj_ov_octave(&ov,lsdj_in.octave<oct_was,lsdj_in.octave,fm1_ms);
     else if(lsdj_in.mode==LSDJ_KEYS_BUTTONS&&(panel_now&~panel_was&3u))
         lsdj_ov_say(&ov,LSDJ_MSG_OCT_BUTTONS,fm1_ms);
-    /* Note mode: every key light off. */
-    piano_lights(lsdj_in.mode==LSDJ_KEYS_NOTES?0xFFu:input_buttons);
-    input_seen|=input_buttons;gp_buttons(input_buttons|sync_btn);
+    /* Note mode: every key light off. The web page's controller (PAD_SET) joins the keys, lights included. */
+    uint32_t web_pad=link_pad_now();
+    piano_lights(lsdj_in.mode==LSDJ_KEYS_NOTES?0xFFu:input_buttons|web_pad);
+    input_seen|=input_buttons|web_pad;gp_buttons(input_buttons|web_pad|sync_btn);
 }
 #endif
 static void boot_splash(int display_ok){
@@ -1230,7 +1273,7 @@ void gb_cstart(const uint32_t *parameters){
     lsdj_set_unpack(ftl.has_settings?ftl.settings:0u,&settings);settings_apply();
     lsdj_midi_unpack(((ftl.rec_has>>MIDI_REC)&1u)?ftl.rec[MIDI_REC]:0u,&midi);   /* (defaults if none) */
     lsdj_feat_unpack(((ftl.rec_has>>FEAT_REC)&1u)?ftl.rec[FEAT_REC]:0u,&feat);
-    lsdj_fx_init(&fx,fx_echo);lsdj_fx_ui_init(&fxu);fx_load();feat_apply();gp_set_fx(fx_hook);cursor_detect();
+    lsdj_fx_init(&fx,fx_echo);lsdj_fx_set_reverb(&fx,fx_reverb);lsdj_fx_ui_init(&fxu);fx_load();feat_apply();gp_set_fx(fx_hook);cursor_detect();
     fm1_led_key(SAVE_BUTTON,1);
 #endif
     boot_splash(display_ok);
@@ -1272,6 +1315,11 @@ void gb_cstart(const uint32_t *parameters){
             if(panel&~prev_panel&(1u<<FX_BUTTON)&&!menu.open){   /* FX: the master pages open / closed */
                 if(fx_open){fx_open=0;lsdj_fx_master(&fxu,0);bars.until_ms=0;}
                 else{fx_open=1;lsdj_fx_master(&fxu,1);fx_bars_show(-1);}
+            }
+            if(panel&~prev_panel&(1u<<CHAN_BUTTON)&&!menu.open){   /* SELECT button: the effects channel, PU1 .. NOI, cursor */
+                if(fx_open){fx_open=0;lsdj_fx_master(&fxu,0);}   /* to the channel pages */
+                if(!lsdj_fx_chmode(&fxu))lsdj_fx_pick_next(&fxu);   /* KNOBS = CHANNELS: each knob is a channel already */
+                fx_bars_show(-1);
             }
             if(panel&~prev_panel&(1u<<GLO_BUTTON)){
                 if(!menu.open){lsdj_menu_open(&menu);fx_open=0;lsdj_fx_master(&fxu,0);bars.until_ms=0;}   /* the effects panel goes */
